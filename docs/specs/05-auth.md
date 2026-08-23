@@ -26,6 +26,16 @@ Web sign-in is unimplemented, not just unstyled.
   and passed to `supabase.auth.setSession`.
 - **Sign-out:** `src/components/sign-out-button.tsx` (native) / `sign-out-button.web.tsx`
   (no-op), used as a header icon on the home screen (`src/app/index.tsx`).
+- **Suppressing router navigation on the OAuth callback:** `src/app/+native-intent.tsx`.
+  `forage://google-auth` is delivered to the app as an ordinary incoming URL (confirmed via
+  `adb logcat`: Chrome sends it as a `VIEW`/`BROWSABLE` intent straight to `MainActivity`), so
+  expo-router's own `Linking` subscriber — separate from `WebBrowser.openAuthSessionAsync`'s own
+  listener, which correctly resolves the auth session — also sees it and tries to navigate to a
+  `google-auth` route that doesn't exist, surfacing an "Unmatched route" error even though
+  `setSession` succeeds underneath it. `redirectSystemPath` returns `null` for any path
+  containing `google-auth`, which per expo-router's `NativeIntent` type means "no redirection
+  occurs and the app stays on the current path." Verified on-device: sign-out → sign-in with
+  Google no longer shows the error and lands correctly on `AppTabs`.
 
 ### Why `_layout.tsx` / `_layout.web.tsx` are separate files, not a `Platform.OS` branch
 
