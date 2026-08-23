@@ -64,6 +64,10 @@ Supabase (Postgres + RLS + Storage) · **pnpm**
 
 Use `pnpm`, never `npm` or `yarn`.
 
+Mobile only — Android is the current target, iOS may follow later, but **web is out of scope
+permanently** (not deferred); don't reintroduce `react-native-web`, an Expo `web` platform
+config, or `.web.*` files.
+
 ## Naming
 
 Singular `snake_case` tables · `id` PKs · `<singular_table>_id` FKs · `_at` timestamp suffix ·
