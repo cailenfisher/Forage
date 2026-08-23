@@ -47,6 +47,21 @@ ADR 0013, since duplicates are the actual failure mode.
 **Substitution preferences** — whether a user accepts store brand for name brand is a per-user
 judgment. Do not bake "same class means interchangeable" into anything irreversible.
 
+## Identity and tenancy
+
+**`user_account` / `household` bootstrap on first sign-in.** Confirmed against the disposable
+test project (2026-08-23): no trigger on `auth.users`, and `public.user_account` /
+`public.household` / `public.household_member` are all empty. Google sign-in (see
+`docs/specs/05-auth.md`) produces a Supabase session with nothing behind it in `public`.
+
+Rejected building this alongside the login gate because it bakes in a real product decision —
+does every new user get a private household by default, or is household membership
+invite-only from day one? — that isn't written down anywhere. Options to weigh when picked up:
+a `security definer` trigger on `auth.users` insert (the pattern Supabase's own quickstart uses
+for a `profiles` table) that creates `user_account` plus a starter `household` +
+`household_member` row, versus a client-driven onboarding step that lets a new user join an
+existing household by invite instead of always minting a new one.
+
 ## Sync
 
 **Offline sync — revisit before implementation.** MVP targets one household, where a full

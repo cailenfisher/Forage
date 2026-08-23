@@ -2,6 +2,7 @@ import { SymbolView, type SymbolViewProps } from 'expo-symbols';
 import { Alert, Platform, Pressable, ScrollView, StyleSheet, View } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
+import { SignOutButton } from '@/components/sign-out-button';
 import { ThemedText } from '@/components/themed-text';
 import { ThemedView } from '@/components/themed-view';
 import { WebBadge } from '@/components/web-badge';
@@ -66,13 +67,16 @@ export default function HomeScreen() {
       contentInset={insets}
       contentContainerStyle={[styles.contentContainer, contentPlatformStyle]}>
       <ThemedView style={styles.container}>
-        <View style={styles.header}>
-          <ThemedText type="subtitle" themeColor="tint" style={styles.wordmark}>
-            Forage
-          </ThemedText>
-          <ThemedText type="small" themeColor="textSecondary">
-            Price intelligence for everyday groceries.
-          </ThemedText>
+        <View style={styles.headerRow}>
+          <View style={styles.header}>
+            <ThemedText type="subtitle" themeColor="tint" style={styles.wordmark}>
+              Forage
+            </ThemedText>
+            <ThemedText type="small" themeColor="textSecondary">
+              Price intelligence for everyday groceries.
+            </ThemedText>
+          </View>
+          <SignOutButton />
         </View>
 
         <ThemedView type="backgroundElement" style={styles.heroCard}>
@@ -168,9 +172,14 @@ const styles = StyleSheet.create({
     paddingHorizontal: Spacing.four,
     gap: Spacing.five,
   },
+  headerRow: {
+    flexDirection: 'row',
+    alignItems: 'flex-start',
+    justifyContent: 'space-between',
+    paddingTop: Spacing.three,
+  },
   header: {
     gap: Spacing.half,
-    paddingTop: Spacing.three,
   },
   wordmark: {
     letterSpacing: -0.5,
