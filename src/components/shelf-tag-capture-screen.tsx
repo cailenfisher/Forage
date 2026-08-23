@@ -168,7 +168,14 @@ export function ShelfTagCaptureScreen() {
       setOcrResult(recognized);
       setExtraction(fields);
       setBarcodeResults(barcodes);
-      setDescription(fields.descriptionGuess ?? '');
+      // Combine brand + name when a template found both as separate printed
+      // lines (Aldi's standard template — see ADR 0018 and deferred.md's
+      // "brand is confirmed absent" correction) rather than dropping the
+      // brand: there's no separate brand field or product-identity
+      // resolution yet, so this is the only place it's preserved for the
+      // user to see and edit before it's saved as receipt_description/alias
+      // text.
+      setDescription([fields.brand, fields.descriptionGuess].filter(Boolean).join(' ') || '');
       // storeItemCode is deliberately never prefilled from extraction: there
       // is no known way to read a real store item code off a Walmart shelf
       // tag (see docs/decisions/deferred.md), and a plausible-looking wrong
@@ -214,6 +221,8 @@ export function ShelfTagCaptureScreen() {
         sizeQuantity: sizeText.trim() ? sizeQuantity : null,
         unitOfMeasureId: sizeText.trim() ? selectedUnitId : null,
         tagFooter: extraction?.tagFooter ?? null,
+        identifierCandidate: extraction?.identifierCandidate ?? null,
+        templateMatch: extraction?.templateMatch ?? null,
         barcodeResults,
         qrToken: qrBarcode ? qrPathSegment(qrBarcode.data) : null,
       });

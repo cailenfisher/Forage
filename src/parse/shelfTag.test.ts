@@ -10,7 +10,7 @@ import type { OcrElement, OcrResult } from './types.ts';
 // physical tag photographed in-store, and has been removed; its ML Kit
 // geometry was genuine device output but the subject wasn't a real capture,
 // so it didn't meet the project's "test against real device output" bar
-// either. Four real tags (ramen, celery, milk, corn) have ground truth
+// either. Twelve real tags across three retailers have ground truth
 // recorded in docs/decisions/deferred.md and docs/specs/06-shelf-tag-capture.md
 // pending device re-capture — see that ground truth before adding fixtures
 // here so expected values aren't reverse-engineered from parser output.
@@ -212,7 +212,94 @@ test('extractShelfTagFields returns all-null fields for an empty capture rather 
     size: null,
     tagFooter: null,
     descriptionGuess: null,
+    brand: null,
+    identifierCandidate: null,
+    templateMatch: null,
   });
+});
+
+// ADR 0018 — template matching. Ground truth for these shapes is the
+// second evidence batch in docs/decisions/deferred.md.
+
+test('extractShelfTagFields matches walmart-esl and surfaces the UPC fragment as a generalized identifier candidate', () => {
+  // Ramen tag footer, ground truth in deferred.md.
+  const result = ocrResult([element('RAMEN BEEF', 0, 0), element('FAC 4 CAP 136 0212', 0, 30)]);
+  const extraction = extractShelfTagFields(result);
+
+  assert.equal(extraction.templateMatch?.slug, 'walmart-esl');
+  assert.deepEqual(extraction.identifierCandidate, { key: 'upc_fragment', value: '0212' });
+});
+
+test('extractShelfTagFields matches walmart-paper and does not guess an identifier candidate from the corn tag', () => {
+  // Corn paper tag footer, no trailing fragment — ground truth in deferred.md.
+  const result = ocrResult([element('CORN BULK HM', 0, 0), element('FAC 12 CAP 288', 0, 30)]);
+  const extraction = extractShelfTagFields(result);
+
+  assert.equal(extraction.templateMatch?.slug, 'walmart-paper');
+  // The corn tag's own 4100-0001-shaped code is a different, unconfirmed
+  // field — see deferred.md's open questions — so this stays null rather
+  // than guessing it's the same thing as the eink fragment.
+  assert.equal(extraction.identifierCandidate, null);
+});
+
+test('extractShelfTagFields matches aldi-esl-standard, splits brand from name, and routes the 6-digit code to identifierCandidate.unknown', () => {
+  // Tuna tag ground truth (deferred.md): brand line, name line, footer row.
+  const result = ocrResult([
+    element('NORTHERN CATCH', 0, 0),
+    element('Chunk Tuna in Oil', 0, 30),
+    element('0.31 lb', 0, 60),
+    element('$3.20 per lb', 0, 90),
+    element('201552', 0, 120),
+    element('$0.99', 0, 150, 60, 40),
+  ]);
+  const extraction = extractShelfTagFields(result);
+
+  assert.equal(extraction.templateMatch?.slug, 'aldi-esl-standard');
+  assert.equal(extraction.brand, 'NORTHERN CATCH');
+  assert.equal(extraction.descriptionGuess, 'Chunk Tuna in Oil');
+  assert.deepEqual(extraction.identifierCandidate, { key: 'unknown', value: '201552' });
+});
+
+test('extractShelfTagFields matches aldi-esl-price-drop from the PRICE DROPS badge text and does not split a brand', () => {
+  // Strawberries tag ground truth (deferred.md): no brand line (open
+  // question whether that's the price-drop template or commodity produce —
+  // either way, this template must not fabricate a brand split).
+  const result = ocrResult([
+    element('PRICE DROPS', 0, 0),
+    element('Strawberries', 0, 30),
+    element('1.00 lb', 0, 60),
+    element('$1.89 per lb', 0, 90),
+    element('356646', 0, 120),
+    element('$1.89', 0, 150, 60, 40),
+  ]);
+  const extraction = extractShelfTagFields(result);
+
+  assert.equal(extraction.templateMatch?.slug, 'aldi-esl-price-drop');
+  assert.equal(extraction.brand, null);
+  assert.deepEqual(extraction.identifierCandidate, { key: 'unknown', value: '356646' });
+});
+
+test('extractShelfTagFields matches aldi-esl-numeric-only when nothing but price and footer are printed', () => {
+  // Milk tag ground truth (deferred.md): no brand, no description, no
+  // currency symbol on the price — everything else is on the display card,
+  // not the ESL itself.
+  const result = ocrResult([element('1.00 gal', 0, 0), element('$5.25 per gal', 0, 30), element('416943', 0, 60), element('5.25', 0, 90, 60, 40)]);
+  const extraction = extractShelfTagFields(result);
+
+  assert.equal(extraction.templateMatch?.slug, 'aldi-esl-numeric-only');
+  assert.equal(extraction.descriptionGuess, null);
+  assert.equal(extraction.brand, null);
+  assert.deepEqual(extraction.identifierCandidate, { key: 'unknown', value: '416943' });
+});
+
+test('extractShelfTagFields does not match any template on an unrelated tag, and every field still comes from flat extraction', () => {
+  const result = ocrResult([element('GREAT VALUE MILK', 0, 0), element('$3.99', 0, 30)]);
+  const extraction = extractShelfTagFields(result);
+
+  assert.equal(extraction.templateMatch, null);
+  assert.equal(extraction.brand, null);
+  assert.equal(extraction.identifierCandidate, null);
+  assert.equal(extraction.descriptionGuess, 'GREAT VALUE MILK');
 });
 
 test('normalizeUnitToken maps known tokens case- and punctuation-insensitively', () => {

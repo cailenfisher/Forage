@@ -170,6 +170,20 @@ based on:
   wired to any database field yet — see the "tag identifier storage" item below, which needs a
   decision before it's persisted anywhere beyond `capture_artifact.raw_output` (which already
   retains it permanently under ADR 0002, since it's derived from the stored OCR text).
+- **Correction (second evidence batch, 2026-08-23) — `format` is derived unsoundly, and the
+  paper tag's own identity code is dropped.** `extractTagFooter` infers `format: 'paper'` from
+  the *absence* of the trailing fragment. That's classification from missing data — an e-ink tag
+  whose fragment fails OCR would be misclassified `paper` — the shape non-negotiable #2 exists to
+  prevent, even though no user-facing field is filled by it. Separately, the corn paper tag does
+  print an identity code, `4100-0001`, eight digits with a hyphen, in a different position (right
+  of the price, not appended to the `FAC`/`CAP` line) alongside an explicit date (`08/04/26`).
+  Neither is extracted; `isNoiseRow` has no path for a hyphenated code outside the footer line,
+  and `format` is being asked to do template-matching work in the wrong place. A decoded-QR check
+  corroborates independently, without inferring from absence: the paper tag's QR opens `20`, all
+  four e-ink samples open `30` (see the QR-structure finding below) — a positive signal available
+  before any glyph is read. Not fixed. Whether `4100-0001` is the same field as the e-ink
+  fragment (paper printing strictly more) is open — one photo of a Walmart paper tag on a UPC
+  item would settle it.
 - **Split unit-price rendering had the same bug `extractPrice` was already fixed for, on the
   same real tag.** The celery tag renders both its total price *and* its per-unit price as a
   split dollars+cents pair with no decimal point (`$3` `67`, twice) — `extractUnitPrice`
@@ -198,7 +212,13 @@ based on:
   vs. e-ink format, an effective date, a non-UPC hyphenated code), but **Claude Code cannot
   generate these fixtures** — `OcrResult` JSON carries real ML Kit geometry, and synthesizing it
   from a photograph would mean fabricating box coordinates, defeating the point of `CLAUDE.md`'s
-  "test against real device output" rule. Awaiting device re-capture of the four tags above.
+  "test against real device output" rule. Awaiting device re-capture — the second evidence batch
+  below extends the ground-truth set from four Walmart tags to twelve tags across three
+  retailers; suggested capture priority (one per distinct failure mode, not one per retailer) is
+  Walmart ramen (cents-denominated price), Aldi milk (no currency symbol/brand/description —
+  the manifest case), Aldi syrup (brand/name split, normalized size, ceiling rounding), Walmart
+  corn (paper template, `4100-0001`, bleed-through), Aldi strawberries (inverted colour,
+  `PRICE DROPS`).
 - **Processing is synchronous and foreground**, same tradeoff as the receipt-capture screen's
   first pass, not the async "snap-and-forget" pipeline `01-capture-pipeline.md` describes.
   Durability still holds — `capture_artifact` lands before resolution/observation is attempted —
@@ -208,18 +228,35 @@ based on:
   existing one. If the printed text on a later scan differs from the first (e.g. an abbreviation
   changed), that phrasing is never recorded as a `product_alias`. Acceptable for a first pass;
   revisit if alias coverage turns out to matter for matching quality.
-- **`price_kind` is a manual toggle**, not detected from the tag (real shelf tags usually signal
-  sale/clearance by tag color, which a plain OCR pass over text doesn't see).
+- **`price_kind` is a manual toggle**, not detected from the tag. (Rationale corrected
+  2026-08-23: the original claim — "a plain OCR pass over text doesn't see color" — is true but
+  incomplete. Aldi's price-drop template prints the literal string `PRICE DROPS` in the badge
+  area; the signal is in the text, not only the color, and a plain OCR pass does see it.
+  Detection is more tractable than this entry originally assumed. Colour inversion is still real
+  and still relevant for any template that signals sale/clearance *only* by colour, if one turns
+  out to exist. Still not implemented — see the `price_kind` default gap below, which is the
+  higher-priority problem regardless of whether detection ever gets built.)
 - **No barcode decode.** A UPC printed as a barcode graphic (not OCR'd text) isn't read — this is
   explicitly the separate "Barcode scan" capture mode's job (`00-project-overview.md`), not
   shelf tag photography's.
 - **Product identity resolution (brand, product_class, canonical size) is unbuilt**, same gap as
   receipts. Every shelf-tag-created `retailer_product` has `product_id = null`.
-- **Brand is confirmed absent from shelf tags, including for nationally branded goods.** The
-  milk tag (`GAL … VITAMIN D`, no "Galliker's") is the stronger evidence than the produce case —
-  a branded gallon of milk gets a generic tag description too. This isn't a gap to close in the
-  tag parser; it reinforces the existing choice to create `retailer_product` with
-  `product_id = null` on every shelf-tag save.
+- **Brand is confirmed absent from shelf tags — scoped to the Walmart ESL template, not a
+  general claim.** (Corrected 2026-08-23, second evidence batch below.) The milk tag
+  (`GAL … VITAMIN D`, no "Galliker's") is the stronger evidence than the produce case — a
+  branded gallon of milk gets a generic tag description too, on Walmart. But every standard Aldi
+  tag prints the brand on its own dedicated line above the product name (`NORTHERN CATCH` /
+  `Chunk Tuna in Oil`, `MILLVILLE` / `Original Pancake Syrup`) — at Aldi, brand is a first-class
+  extractable field. The Walmart conclusion stands (create `retailer_product` with
+  `product_id = null` on Walmart shelf-tag saves), but the reasoning doesn't transfer to other
+  retailers — "brand not found" means two different things at the two retailers, and only the
+  template knows which. This was the strongest single argument for the per-retailer field
+  manifest in ADR 0018 (accepted, built same day) — the `aldi-esl-standard` template now splits
+  brand from name when exactly two non-noise rows remain and the first is all-caps
+  (`ShelfTagExtraction.brand`, see `shelfTagTemplates.ts`). The review screen recombines
+  `brand` + `descriptionGuess` into one editable prefill rather than dropping brand on the
+  floor, since there's still no dedicated brand column or product-identity resolution to put it
+  in.
 - **PLU on produce packages** — the celery package prints `#4575` (IFPS produce PLU) above its
   barcode, a categorically different identifier from the UPC (class-level "celery hearts from
   any grower," not "this bag"). `product_identifier.identifier_type` already accepts `plu`
@@ -356,6 +393,179 @@ based on:
   without that gate. **Explicitly deferred rather than built** pending that size-reference list
   being specified and reviewed. Would live downstream of `extractShelfTagFields`, not inside
   it, per the replay contract in ADR 0002, whenever it's picked up.
+- **Second evidence batch (2026-08-23) — Aldi and Dollar Tree tags, plus two more Walmart
+  tags.** Twelve tags total, three retailers, one photography session. Walmart and Aldi are
+  build targets; Dollar Tree is a generalization stress test only — not a build target, but two
+  of its findings falsify rules that otherwise looked safe (see `isDegenerate` below). Machine-
+  readable content decoded with OpenCV/pyzbar as a stand-in for ML Kit — decode difficulty is not
+  a prediction of on-device behaviour and should be re-measured per non-negotiable #7.
+
+  | # | Retailer | Template | Description as printed | Price | Unit price | Size on tag | Code(s) | Machine-readable |
+  |---|---|---|---|---|---|---|---|---|
+  | 1 | Walmart | ESL | `RAMEN BEEF` | 46¢ | 15.3¢ PER OZ | — | `0212` | QR `w-mt.co/q/300ctBZ0VD4J3-ZDQBP` |
+  | 2 | Walmart | ESL | `CELERY HEART HM` | $3.67 | $3.67 PER EA | — | `5301` | QR `w-mt.co/q/30bP5WB0VD4R0-9RXN3` |
+  | 3 | Walmart | ESL | `GA… VITAMIN D` | $5.78 | 4.5¢ PER FL OZ | — | `0010` | QR decode failed |
+  | 4 | Walmart | ESL | `DT COKE 2OFO` | $2.48 | 12.4¢ PER FL OZ | — | `0045` | QR `w-mt.co/q/300eFYF0VD4R0-9RGGA` |
+  | 5 | Walmart | paper produce | `CORN BULK HM` | 33¢ | 33.0¢ PER EA | — | `4100-0001` | QR `w-mt.co/q/20bOFDr0VDSF.AP.9.3` |
+  | 6 | Aldi | ESL standard | `NORTHERN CATCH` / `Chunk Tuna in Oil` | $0.99 | $3.20 per lb | 0.31 lb | `201552` | none |
+  | 7 | Aldi | ESL standard | `MILLVILLE` / `Original Pancake Syrup` | $2.35 | $3.14 per qt | 0.75 qt | `365419` | none |
+  | 8 | Aldi | ESL standard | `L'OVEN FRESH` / `White Bread` | $1.45 | $1.16 per lb | 1.25 lb | `500641` | none |
+  | 9 | Aldi | ESL price-drop | `Strawberries` | $1.89 | $1.89 per lb | 1.00 lb | `356646` | none |
+  | 10 | Aldi | ESL numeric-only | *(none on tag)* | 5.25 | $5.25 per gal | 1.00 gal | `416943` | none |
+  | 11 | Dollar Tree | laminated two-zone | `LMC-STEERING WHEEL TRAY FR CAR` | $5 | $5.00 PER EA | — | `03-81283`, `02786` | Code 39 → `0381283` |
+  | 12 | Dollar Tree | laminated two-zone | `FBREZE AUTO GAIN FRESH 4ML 2PK` | $6 | $3.00 PER EA | — | `04-17392`, `01077` | Code 39 → `0417392` |
+
+  Tags 1–5 overlap the first batch above; tags 3 and 4 are additions to it. Source photos are
+  with the project owner, not in the repo — see the fixture-corpus bullet above for why they
+  can't yet become `__fixtures__` entries.
+- **Live bug, not yet fixed (found 2026-08-23) — cents-denominated prices extract as null, and
+  worse, sometimes extract as the wrong field's value.** `CURRENCY_PATTERN` and `PRICE_PATTERN`
+  in `rows.ts` both require a literal `.` and exactly two fractional digits; `DOLLARS_ONLY_PATTERN`
+  requires a literal `$`. A price printed as `46¢` or `33¢` (no dollar sign, no decimal point)
+  satisfies none of them, so it never becomes a `PriceCandidate`, and the split-pair scan doesn't
+  fire either since it requires a leading `$`. Two of five real Walmart tags (ramen `46¢`, corn
+  `33¢`) extract no price at all — both low-priced items, exactly the population where
+  cents-only rendering is used, so this isn't a rare edge. It gets worse where a unit price is
+  well-formed: Dollar Tree tag #12 prints retail `$6` (fails every pattern) and unit price `$3.00`
+  (a valid currency element); `extractPrice` finds exactly one candidate, and "largest glyph wins"
+  sets `priceCent` to the **unit price** — half the actual price, with nothing marking it
+  suspect. The null cases are correct behaviour under non-negotiable #2 (missing recorded as
+  missing); the Dollar Tree case is a non-negotiable #2 violation — a value from a different
+  field gets written into `priceCent`. The same shape would occur at Walmart on any tag pairing a
+  cents-denominated retail price with a dollar-denominated unit price. **Not fixed.** Fix shape
+  under consideration: recognize a cents amount (a trailing `¢`, merged or split across adjacent
+  elements) as a price form in its own right, converting directly to `price_cent` with no float
+  intermediate — but how ML Kit segments `46` and `¢` on a real capture is unknown to this
+  analysis and must be confirmed on device before implementing, per non-negotiable #7's spirit.
+  **Highest-priority open item from this batch.**
+- **Walmart QR structure — a refinement, not a reversal, of the killed store hypothesis.** The
+  "token encodes store" hypothesis above stays killed (opaque token). New finding: the QR's
+  leading two characters are `30` on every e-ink sample and `20` on the one paper sample, which
+  also switches its internal separator from `-` to `.`. That's a template discriminator readable
+  from the decoded QR before any glyph is OCR'd — feeds the template proposal below, not online
+  resolution (ADR 0017 still stands; this is inspection of the already-persisted token, no
+  network call). Separately confirmed: Walmart's ESL layout is department-invariant across
+  grocery, dairy, produce, and beverage in this sample — the only observed Walmart split is by
+  physical medium (ESL vs. paper), not department. And the coke tag's description
+  (`DT COKE 2OFO`, an OCR'd `0` read as `O`) is disambiguated by the derived-size cross-check:
+  $2.48 ÷ 12.4¢/fl oz = 20.0 fl oz snaps cleanly, confirming "20 FO" meant 20 fl oz — the
+  deferred size-derivation item above has a second use as an OCR cross-check on the description,
+  not just size recovery.
+- **Aldi has three distinct ESL templates in one store, not one.** Standard (brand line +
+  product name line + footer row of size/unit-price/code); price-drop (inverted red field, white
+  text, `PRICE DROPS` badge, no brand line — same footer structure); numeric-only (shows only the
+  price and footer row — brand, description, size, and unit are printed on the physical display
+  card the ESL is taped to, not on the ESL itself, and the price has no currency symbol at all, a
+  second and independent reason it fails `CURRENCY_PATTERN` beyond the live bug above). The
+  numeric-only case is the clearest argument for a field manifest: without one, a parser sees no
+  brand, no description, and no currency symbol, and can't distinguish catastrophic OCR failure
+  from correct extraction of a template that prints none of those things by design.
+- **Resolved (ADR 0018, 2026-08-23) — Aldi's trailing 6-digit code (`201552`, `365419`, etc.)
+  looks like a real, safe store item code — unlike Walmart's 4-digit UPC fragment — but its
+  exact meaning is unconfirmed, so it does not go into `store_item_code`.** Six digits against
+  an assortment of roughly 1,400–2,000 Aldi SKUs makes collision negligible; four digits against
+  a 100,000+ item Walmart catalog makes collision certain, which is exactly why the Walmart
+  fragment was kept out of `store_item_code` too. The decision (user-directed, correcting an
+  earlier draft of ADR 0018 that left this as an open question): treat it exactly like Walmart's
+  fragment always has been — `retailer_product.tag_identifier` jsonb, never a lookup key, never
+  `store_item_code`. Unlike Walmart's fragment (confirmed, on three tag/package pairs, to be the
+  UPC-A tail), nothing has confirmed what Aldi's code actually is, so it's keyed `unknown`
+  (`{"tag_format": "eink", "unknown": "201552"}`) rather than a confident-sounding name — rename
+  the key once a receipt or catalog cross-reference confirms it. Implemented in
+  `src/parse/shelfTagTemplates.ts` (`applyShelfTagTemplate`) and wired through the generalized
+  `identifierCandidate` field in `shelfTag.ts` / `buildTagIdentifier` in `shelfTags.ts`.
+- **Aldi's unit price is ceilinged to the cent, not rounded.** Confirmed twice: tuna
+  ($0.99 ÷ 0.31 lb = $3.19354, printed $3.20; round-half-up would give $3.19) and syrup
+  ($2.35 ÷ 0.75 qt = $3.13333, printed $3.14; round-half-up would give $3.13). A reconciliation
+  validator built against standard rounding would flag both correct tags as inconsistent. Nothing
+  consumes this today so nothing is broken by it yet, but it's a known gap for whoever builds
+  reconciliation — see "Reconciliation rounding is unspecified" below; Walmart appears to round
+  to a tenth of a cent, so one shared rounding assumption would misfire at whichever retailer it
+  wasn't tuned against.
+- **Aldi's printed size is normalized into Aldi's chosen unit, not the package's declared
+  unit** — a 5 oz tuna can shows `0.31 lb`, a 24 fl oz syrup shows `0.75 qt`. Free extraction (no
+  derivation needed, unlike Walmart), but "size present on tag" doesn't mean "size in the unit
+  the user expects to see"; comparing an Aldi size against a Walmart size requires unit
+  normalization regardless. Validates existing canonical-unit handling rather than adding new
+  work.
+- **`isDegenerate` (`unitCode === 'each'`) is Walmart-scoped, not universal, and is currently
+  documented in the code as if it were general.** True at Walmart (celery, corn: price and unit
+  price are identical when priced by the each). Confirmed false at Dollar Tree: tag #12 prints
+  retail `$6`, unit price `$3.00 PER EA`, description ending `2PK` — "each" means per unit
+  *inside* the multipack there, and `retail ÷ unit price = 2`, confirmed by the `2PK` in the
+  description. Dollar Tree is not a build target and no code change follows from this alone, but
+  the general lesson holds: UOM semantics are per-retailer, and any `if unitCode === 'each'` rule
+  is a template-scoped rule currently wearing a global disguise in the
+  `ShelfTagUnitPriceGuess.isDegenerate` comment.
+- **No notion of a tag boundary anywhere in the pipeline — OCR picks up text that isn't on the
+  tag.** Confirmed on both build-target retailers: the Aldi milk tag's surrounding display card
+  supplies the product identity, and Walmart product packages behind the tag are legible in
+  frame. On the Aldi milk tag this happens to produce the right answer by accident via
+  `extractDescriptionGuess`, which is worse than failing, because there's no way to tell it apart
+  from a correct extraction. Not proposing tag-boundary detection here — real work, probably
+  wants perspective rectification too — recording as a known gap.
+- **Moved to ADR 0018 (2026-08-23, Accepted) — the shelf-tag template schema.**
+  Was a STOP-AND-ASK item here; the proposal (retailer × physical-form lineage table, versioned
+  rules/field-manifest, `price_kind` asserted per version, plus the negative-space list of what's
+  deliberately excluded — region proliferation, template inheritance, a zone table, geometric
+  matching, remote authoring, automated induction, interpreter versioning, drift monitoring,
+  retailer inference from the QR domain) now lives in full in
+  `docs/decisions/0018-shelf-tag-templates-are-versioned-lineages.md`. **Accepted and built
+  same day** — see the "Applied" entry directly below for what shipped. The underlying findings
+  that motivated it (six templates, three retailers, the Aldi/Walmart footer-code trust
+  asymmetry, the manifest-ambiguity case) stay recorded above as evidence regardless.
+- **Applied (2026-08-23) — ADR 0018 built: shelf-tag template matching.** Migrations
+  `create_shelf_tag_template_tables`, `add_price_observation_shelf_tag_template_version`,
+  `seed_shelf_tag_templates` — two new shared-tier reference tables (`shelf_tag_template`,
+  `shelf_tag_template_version`), a nullable `price_observation.shelf_tag_template_version_id`
+  FK, `record_price_observation` gained a trailing `p_shelf_tag_template_version_id` param (old
+  10-arg overload dropped, same pattern as the earlier `create_provisional_retailer_product`
+  overload fix), and five template versions seeded at version 1: `walmart-esl`, `walmart-paper`,
+  `aldi-esl-standard`, `aldi-esl-price-drop`, `aldi-esl-numeric-only`. An `aldi` retailer row was
+  also seeded (name/slug only, no store — same low-stakes reference-data treatment as the
+  existing Walmart retailer row from `seed_test_store_and_receipt_bucket`), since it didn't
+  exist yet and `shelf_tag_template.retailer_id` needed something real to point at.
+  `src/parse/shelfTagTemplates.ts` is new: hand-written (not generic-jsonb-driven) scoring and
+  per-template field overrides for all five templates, scored on content signals only —
+  retailer-agnostic, because the capture flow doesn't know the user's chosen store/retailer
+  until after extraction already ran (`shelf-tag-capture-screen.tsx`). `shelfTag.ts` gained
+  `brand`, `identifierCandidate`, and `templateMatch` on `ShelfTagExtraction`, plus a
+  `BARE_SIZE_ROW_PATTERN` fix to `isNoiseRow` (a standalone size row like Aldi's `"0.31 lb"`
+  wasn't previously excluded from description candidates, which would have broken the Aldi
+  brand/name split before it could work). `shelfTags.ts` generalized `buildTagIdentifier` to
+  take the new `identifierCandidate` instead of a hardcoded Walmart-only fragment check, and
+  added `resolveShelfTagTemplateVersionId` (two plain lookups, not an embedded-resource filter
+  query, to avoid relying on unverified PostgREST join-filter syntax) to turn a `{slug, version}`
+  match into the real FK value. **Not yet exercised on a real device** — synthetic fixtures only
+  (`shelfTag.test.ts`), same caveat as the rest of this feature. `price_kind` on each template
+  version is stored but deliberately not wired into any write path — see the STOP-AND-ASK entry
+  below, unchanged by this work per explicit instruction. The cents-denominated price bug (live
+  bug entry above) is also unchanged — explicitly deferred, not touched.
+- **STOP AND ASK — `price_kind`'s default is the actual gap, not the column.** `price_kind`
+  currently defaults to `regular` on the review screen (`06-shelf-tag-capture.md`). Under
+  snap-and-forget, an unreviewed clearance or sale tag writes `regular`, which is precisely the
+  promotional-baseline damage ADR 0003 introduced the column to prevent — and because
+  `price_observation` is append-only, correcting a wrong `price_kind` costs a full
+  `superseded_by_id` chain rather than an edit. The column can't currently distinguish "user
+  confirmed regular" from "nobody looked," which is non-negotiable #6's null-vs-zero distinction
+  one layer up, except here the wrong value is worse than an absent one. Whether the fix is a
+  nullable column, an `unknown` enum member, or leaning on `field_confidence` is a real decision,
+  not an implementation detail. Separately: nothing in the codebase's analytics or comparison
+  specs currently consumes `price_kind` at all, so recording the distinction is only half the
+  value — excluding sale/clearance from baseline price figures is the half that pays for it, and
+  it's unclear whether that's deliberate sequencing or simply hasn't come up yet. Not implemented.
+- **Open questions, each settled by one more photograph:** is the Aldi price-drop brand-line
+  absence a template property or a commodity-produce property (Walmart's celery has the same
+  absence for the second reason — capture an Aldi price-drop tag on a branded packaged good); is
+  the corn tag's `4100-0001` the same field as the e-ink fragment (capture a Walmart paper tag on
+  a UPC item); does the QR's constant `0VD4` segment encode store, region, or encoding version
+  (capture any ESL at a different Walmart); what does a Walmart promotional/rollback tag look
+  like — none in the corpus yet, and it determines whether the template fork rule above actually
+  fires (capture a rollback tag). Uninterpreted and not worth naming yet, capture verbatim if
+  recaptured: the Walmart corner badge digits (`19`, `11`, `17`, `-5`, `1`), the small boxed glyph
+  left of `FAC` on three of four Walmart e-ink tags (correlates with fresh/perishable across five
+  samples — not enough to name), `HM` in the two Walmart produce descriptions, and Dollar Tree's
+  `P6/F1`/`P8/F1`, `02/26`, and secondary 5-digit codes.
 
 ## Catalog
 

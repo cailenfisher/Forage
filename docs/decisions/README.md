@@ -40,3 +40,4 @@ separate is the whole point of this directory.
 | [0015](0015-open-household-bootstrap.md) | Household bootstrap is open, client-driven onboarding (round 1) | Accepted |
 | [0016](0016-qr-resolution-is-out-of-band-alias-enrichment.md) | QR resolution is out-of-band, best-effort alias enrichment, not identity linking | Superseded by 0017 |
 | [0017](0017-qr-shortlink-resolution-abandoned.md) | Online QR shortlink resolution abandoned; local capture and storage stand | Accepted |
+| [0018](0018-shelf-tag-templates-are-versioned-lineages.md) | Shelf tag extraction is scoped by template, not applied retailer-flat | Accepted |

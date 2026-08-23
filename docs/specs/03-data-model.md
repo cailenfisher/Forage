@@ -88,6 +88,14 @@ See ADR 0006. **The FK points private → shared, never the reverse.**
 - **`category`** — `name`, `parent_category_id` (self-referencing). Assigned to `product`.
   Used for browsing and budgeting, **not** comparison.
 - **`product_attribute_definition`** — `code`, `label`, `value_type`, `comparison_significant`.
+- **`shelf_tag_template`** / **`shelf_tag_template_version`** (ADR 0018) — the shelf-tag layout
+  a capture is extracted against. `shelf_tag_template`: `retailer_id` (nullable — null applies
+  to any retailer), `slug`, `physical_form` (`esl`/`paper`/`laminated`), `region` (nullable).
+  `shelf_tag_template_version`: `shelf_tag_template_id`, `version`, `match_rules`/
+  `field_manifest`/`extraction_rules` (jsonb — documentary; the interpreter is hand-written TS
+  in `src/parse/shelfTagTemplates.ts`, not a generic rule engine), `price_kind` (the
+  shelf-observable subset of `price_observation.price_kind`'s enum), `superseded_at` (nullable,
+  null = current). Seeded via migration, not authored remotely.
 
 ### Product identity (shared)
 
@@ -125,7 +133,8 @@ See ADR 0006. **The FK points private → shared, never the reverse.**
   (`regular`/`sale`/`clearance`/`loyalty`/`coupon_applied`), `observed_at`,
   `verification_state`, `confidence`, `verified_at`, `verified_by_user_account_id`,
   `superseded_by_id`, `contributed_by_user_account_id` **(restricted)**,
-  `capture_id` **(restricted)**.
+  `capture_id` **(restricted)**, `shelf_tag_template_version_id` (nullable, ADR 0018 — which
+  template version, if any, extraction matched against for a shelf-tag-sourced observation).
   - **Append-only.** Corrections are new observations, never `UPDATE`.
 - **`price_observation_dispute`** — `price_observation_id`, `raised_by_user_account_id`,
   `reason`, `resolution_state`, `raised_at`.

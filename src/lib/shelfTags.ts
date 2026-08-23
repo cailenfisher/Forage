@@ -2,6 +2,7 @@ import { supabase } from '@/lib/supabase';
 import { uploadCaptureImage } from '@/lib/storage';
 import { BARCODE_SCAN_VERSION, type BarcodeScanGuess } from '@/ocr/scanBarcode';
 import { SHELF_TAG_EXTRACTOR_VERSION, type ShelfTagFooterGuess } from '@/parse/shelfTag';
+import type { ShelfTagTemplateMatch } from '@/parse/shelfTagTemplates';
 import type { OcrResult } from '@/parse/types';
 
 export type UnitOfMeasureOption = {
@@ -52,8 +53,20 @@ export type SaveShelfTagObservationParams = {
   sizeQuantity: number | null;
   unitOfMeasureId: string | null;
   // The "FAC <n> CAP <n> [<fragment>]" footer read off the tag, if any (see
-  // ShelfTagFooterGuess) — feeds tag_identifier below, never store_item_code.
+  // ShelfTagFooterGuess) — feeds tag_identifier.tag_format below, never
+  // store_item_code.
   tagFooter: ShelfTagFooterGuess | null;
+  // ADR 0018's generalized replacement for the old Walmart-only inline
+  // upc_fragment special case — whichever footer/identity token the
+  // matched template extracted, keyed by what it means ('upc_fragment' for
+  // Walmart's confirmed UPC-A tail, 'unknown' for Aldi's 6-digit code).
+  // Feeds tag_identifier below, same never-a-lookup-key posture.
+  identifierCandidate: { key: string; value: string } | null;
+  // Which shelf_tag_template_version (if any) extraction matched against —
+  // resolved to a real row id and attached to the observation below so
+  // "every observation ever parsed as Walmart ESL" is a join away. Null
+  // when nothing matched confidently (ADR 0018's "never gate" rule).
+  templateMatch: ShelfTagTemplateMatch | null;
   // Every barcode decoded from the capture photo (see scanBarcode.ts),
   // regardless of type — written verbatim to its own capture_artifact row
   // when non-empty, so raw decode output is retained permanently under ADR
@@ -75,16 +88,50 @@ export type SaveShelfTagObservationParams = {
 // excludes FAC/CAP/corner-badge/date, which are per-capture facts already
 // retained permanently in capture_artifact, not chain-scoped facts that
 // belong on retailer_product.
-function buildTagIdentifier(tagFooter: ShelfTagFooterGuess | null, qrToken: string | null): Record<string, string> | null {
+function buildTagIdentifier(
+  tagFooter: ShelfTagFooterGuess | null,
+  identifierCandidate: { key: string; value: string } | null,
+  qrToken: string | null
+): Record<string, string> | null {
   const identifier: Record<string, string> = {};
-  if (tagFooter) {
-    identifier.tag_format = tagFooter.format;
-    if (tagFooter.format === 'eink' && tagFooter.fragment) {
-      identifier.upc_fragment = tagFooter.fragment;
-    }
-  }
+  if (tagFooter) identifier.tag_format = tagFooter.format;
+  if (identifierCandidate) identifier[identifierCandidate.key] = identifierCandidate.value;
   if (qrToken) identifier.qr_token = qrToken;
   return Object.keys(identifier).length > 0 ? identifier : null;
+}
+
+// ADR 0018: resolve a (slug, version) pair from the pure parser's
+// templateMatch into the real shelf_tag_template_version row id, so
+// price_observation can carry an exact, replayable reference rather than a
+// string the app happens to have chosen this build. Best-effort — a lookup
+// miss (e.g. a version this app build doesn't recognize yet) never blocks
+// the save; it just means the observation is recorded without a template
+// reference, same as any tag that didn't match a template at all.
+// Two plain, unambiguous lookups rather than one query with an embedded-
+// resource filter — both tables are small, seeded reference data (five rows
+// total as of ADR 0018), so the extra round trip costs nothing worth
+// avoiding at the price of relying on PostgREST join-filter syntax that
+// hasn't been verified against this project's actual behavior.
+async function resolveShelfTagTemplateVersionId(match: ShelfTagTemplateMatch | null): Promise<string | null> {
+  if (!match) return null;
+  const { data: template, error: templateError } = await supabase
+    .from('shelf_tag_template')
+    .select('id')
+    .eq('slug', match.slug)
+    .is('deleted_at', null)
+    .maybeSingle();
+  if (templateError || !template) return null;
+
+  const { data: version, error: versionError } = await supabase
+    .from('shelf_tag_template_version')
+    .select('id')
+    .eq('shelf_tag_template_id', (template as { id: string }).id)
+    .eq('version', match.version)
+    .is('deleted_at', null)
+    .is('superseded_at', null)
+    .maybeSingle();
+  if (versionError || !version) return null;
+  return (version as { id: string }).id;
 }
 
 export type SaveShelfTagObservationResult = {
@@ -111,6 +158,8 @@ export async function saveShelfTagObservation(
     sizeQuantity,
     unitOfMeasureId,
     tagFooter,
+    identifierCandidate,
+    templateMatch,
     barcodeResults,
     qrToken,
   } = params;
@@ -188,7 +237,10 @@ export async function saveShelfTagObservation(
     const trimmedCode = storeItemCode?.trim() || null;
     const trimmedDescription = description?.trim() || null;
 
-    const existing = trimmedCode ? await findRetailerProductByStoreItemCode(retailerId, trimmedCode) : null;
+    const [existing, shelfTagTemplateVersionId] = await Promise.all([
+      trimmedCode ? findRetailerProductByStoreItemCode(retailerId, trimmedCode) : Promise.resolve(null),
+      resolveShelfTagTemplateVersionId(templateMatch),
+    ]);
 
     let retailerProductId: string;
     let matchedExistingRetailerProduct: boolean;
@@ -204,7 +256,7 @@ export async function saveShelfTagObservation(
           p_product_id: null,
           p_receipt_description: trimmedDescription,
           p_department: null,
-          p_tag_identifier: buildTagIdentifier(tagFooter, qrToken),
+          p_tag_identifier: buildTagIdentifier(tagFooter, identifierCandidate, qrToken),
         })
         .single();
       if (retailerProductError || !retailerProduct) {
@@ -241,6 +293,7 @@ export async function saveShelfTagObservation(
         p_price_kind: priceKind,
         p_field_confidence: {},
         p_capture_id: captureId,
+        p_shelf_tag_template_version_id: shelfTagTemplateVersionId,
       })
       .single();
     if (observationError || !observation) throw observationError ?? new Error('Failed to record price observation');

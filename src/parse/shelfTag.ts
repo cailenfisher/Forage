@@ -1,4 +1,5 @@
 import { findCurrencyElements, flattenElements, parsePrice, reconstructRows, rowText } from './rows.ts';
+import { applyShelfTagTemplate, matchShelfTagTemplate, type ShelfTagTemplateMatch } from './shelfTagTemplates.ts';
 import type { OcrElement, OcrResult, Row } from './types.ts';
 
 // Bumped whenever extraction logic in this file changes meaningfully. Stored
@@ -129,6 +130,26 @@ export type ShelfTagExtraction = {
   // Best-effort guess at the product name, always user-editable, never the
   // value actually written unless the user leaves it as-is.
   descriptionGuess: string | null;
+  // ADR 0018. The tag's own dedicated brand line, when a matched template
+  // both prints one and confidently separates it from the product name
+  // (currently: aldi-esl-standard only). Null everywhere else, including
+  // on Walmart tags — brand is confirmed absent from the Walmart ESL
+  // template, not merely unextracted (see deferred.md).
+  brand: string | null;
+  // ADR 0018. A generalized, retailer-agnostic version of "the footer/
+  // identity token this template prints, if any" — replaces the old
+  // Walmart-only inline upc_fragment special case. `key` names what
+  // tag_identifier field it belongs under: 'upc_fragment' for Walmart's
+  // confirmed UPC-A tail, 'unknown' for Aldi's 6-digit code (real, but
+  // unconfirmed what it represents — see ADR 0018 and deferred.md). Never
+  // store_item_code, never a lookup key on its own.
+  identifierCandidate: { key: string; value: string } | null;
+  // ADR 0018. Which shelf_tag_template_version (if any) scored above
+  // threshold for this capture, and its match confidence alongside the
+  // runner-up's — null when nothing matched confidently, in which case
+  // every field above came from the flat, retailer-agnostic extraction
+  // exactly as before this file knew what a "template" was.
+  templateMatch: ShelfTagTemplateMatch | null;
 };
 
 // A "$" plus 1-4 digits and nothing else — the whole-dollar part of a price
@@ -257,6 +278,16 @@ function extractUnitPrice(text: string, rows: Row[]): ShelfTagUnitPriceGuess | n
 // misread as a "0.25 OZ" size.
 const SIZE_PATTERN = /(\d+(?:\.\d+)?)\s*(fl\.?\s?oz|sq\.?\s?ft|oz|lbs?|g|kg|ml|l|gal|qt|pt|ea|each|ct|dz|dozen|ft)\b/i;
 
+// Same shape as SIZE_PATTERN but anchored to the whole (trimmed) row, for
+// isNoiseRow: Aldi prints size on its own row, separate from both price and
+// unit price (e.g. "0.31 lb" — see deferred.md's second evidence batch),
+// unlike Walmart where size is either absent or embedded in a row with
+// other content. Without this, a bare size row leaks into
+// descriptionCandidateRows and breaks the aldi-esl-standard brand/name
+// split, which depends on exactly two candidate rows remaining.
+const BARE_SIZE_ROW_PATTERN =
+  /^(\d+(?:\.\d+)?)\s*(fl\.?\s?oz|sq\.?\s?ft|oz|lbs?|g|kg|ml|l|gal|qt|pt|ea|each|ct|dz|dozen|ft)$/i;
+
 function extractSize(text: string, unitPrice: ShelfTagUnitPriceGuess | null): ShelfTagSizeGuess | null {
   const withoutUnitPrice = unitPrice ? text.replace(UNIT_PRICE_PATTERN, ' ') : text;
   const match = SIZE_PATTERN.exec(withoutUnitPrice);
@@ -296,6 +327,7 @@ function isNoiseRow(row: Row): boolean {
   if (trimmed.length === 0) return true;
   if (/^\d+$/.test(trimmed)) return true; // bare item code / UPC row
   if (UNIT_PRICE_PATTERN.test(trimmed)) return true;
+  if (BARE_SIZE_ROW_PATTERN.test(trimmed)) return true;
   if (parsePrice(trimmed) !== null) return true;
   if (rowHasSplitPricePair(row)) return true;
   if (TAG_FOOTER_PATTERN.test(trimmed)) return true;
@@ -306,12 +338,21 @@ function letterCount(text: string): number {
   return (text.match(/[A-Za-z]/g) ?? []).length;
 }
 
+// Shared with shelfTagTemplates.ts (ADR 0018): the rows left over after
+// excluding anything that's obviously a price, unit-price, footer, or bare
+// item-code row. Both the flat description guess below and the Aldi
+// brand/name-split template logic work from this same candidate set, so a
+// row that's noise for one is noise for the other.
+function descriptionCandidateRows(rows: Row[]): Row[] {
+  return rows.filter((row) => !isNoiseRow(row));
+}
+
 // The row with the most letters that isn't obviously a price, unit-price,
 // or item-code row — a coarse guess, always shown in an editable field.
-function extractDescriptionGuess(rows: Row[]): string | null {
-  const candidates = rows.filter((row) => !isNoiseRow(row)).map((row) => rowText(row));
-  if (candidates.length === 0) return null;
-  return candidates.reduce((best, candidate) => (letterCount(candidate) > letterCount(best) ? candidate : best));
+function extractDescriptionGuess(candidates: Row[]): string | null {
+  const texts = candidates.map((row) => rowText(row));
+  if (texts.length === 0) return null;
+  return texts.reduce((best, candidate) => (letterCount(candidate) > letterCount(best) ? candidate : best));
 }
 
 // Pure function, no I/O — mirrors the receipt parser's (ocrResult) => shape
@@ -323,12 +364,25 @@ export function extractShelfTagFields(ocrResult: OcrResult): ShelfTagExtraction 
   const text = ocrResult.text;
 
   const unitPrice = extractUnitPrice(text, rows);
+  const candidates = descriptionCandidateRows(rows);
+
+  // ADR 0018: score the seeded templates on cheap content signals only
+  // (retailer isn't known yet at extraction time — see shelfTagTemplates.ts
+  // for why matching is retailer-agnostic). Below threshold, templateMatch
+  // is null and every field below falls through to the flat extraction
+  // exactly as it worked before this file knew what a "template" was —
+  // the ADR's "never gate" rule.
+  const templateMatch = matchShelfTagTemplate(text, rows, candidates);
+  const templateFields = templateMatch ? applyShelfTagTemplate(templateMatch, rows, candidates) : null;
 
   return {
     priceCent: extractPrice(elements, rows),
     unitPrice,
     size: extractSize(text, unitPrice),
     tagFooter: extractTagFooter(text),
-    descriptionGuess: extractDescriptionGuess(rows),
+    descriptionGuess: templateFields?.descriptionOverride ?? extractDescriptionGuess(candidates),
+    brand: templateFields?.brand ?? null,
+    identifierCandidate: templateFields?.identifierCandidate ?? null,
+    templateMatch,
   };
 }
