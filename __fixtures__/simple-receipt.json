@@ -1,0 +1,74 @@
+{
+  "text": "TEST MART\n01/15/2024\nAPPLES 1.99\nBREAD 2.50\nMILK 3.25\nSUBTOTAL 7.74\nTAX 0.50\nTOTAL 8.24",
+  "blocks": [
+    {
+      "text": "TEST MART\n01/15/2024\nAPPLES 1.99\nBREAD 2.50\nMILK 3.25\nSUBTOTAL 7.74\nTAX 0.50\nTOTAL 8.24",
+      "box": { "x": 10, "y": 0, "width": 180, "height": 230 },
+      "lines": [
+        {
+          "text": "TEST MART",
+          "box": { "x": 10, "y": 0, "width": 90, "height": 20 },
+          "elements": [
+            { "text": "TEST", "box": { "x": 10, "y": 0, "width": 40, "height": 20 } },
+            { "text": "MART", "box": { "x": 55, "y": 0, "width": 45, "height": 20 } }
+          ]
+        },
+        {
+          "text": "01/15/2024",
+          "box": { "x": 10, "y": 30, "width": 100, "height": 20 },
+          "elements": [
+            { "text": "01/15/2024", "box": { "x": 10, "y": 30, "width": 100, "height": 20 } }
+          ]
+        },
+        {
+          "text": "APPLES 1.99",
+          "box": { "x": 10, "y": 60, "width": 180, "height": 20 },
+          "elements": [
+            { "text": "APPLES", "box": { "x": 10, "y": 60, "width": 80, "height": 20 } },
+            { "text": "1.99", "box": { "x": 150, "y": 60, "width": 40, "height": 20 } }
+          ]
+        },
+        {
+          "text": "BREAD 2.50",
+          "box": { "x": 10, "y": 90, "width": 180, "height": 20 },
+          "elements": [
+            { "text": "BREAD", "box": { "x": 10, "y": 90, "width": 75, "height": 20 } },
+            { "text": "2.50", "box": { "x": 150, "y": 90, "width": 40, "height": 20 } }
+          ]
+        },
+        {
+          "text": "MILK 3.25",
+          "box": { "x": 10, "y": 120, "width": 180, "height": 20 },
+          "elements": [
+            { "text": "MILK", "box": { "x": 10, "y": 120, "width": 60, "height": 20 } },
+            { "text": "3.25", "box": { "x": 150, "y": 120, "width": 40, "height": 20 } }
+          ]
+        },
+        {
+          "text": "SUBTOTAL 7.74",
+          "box": { "x": 10, "y": 150, "width": 180, "height": 20 },
+          "elements": [
+            { "text": "SUBTOTAL", "box": { "x": 10, "y": 150, "width": 90, "height": 20 } },
+            { "text": "7.74", "box": { "x": 150, "y": 150, "width": 40, "height": 20 } }
+          ]
+        },
+        {
+          "text": "TAX 0.50",
+          "box": { "x": 10, "y": 180, "width": 180, "height": 20 },
+          "elements": [
+            { "text": "TAX", "box": { "x": 10, "y": 180, "width": 40, "height": 20 } },
+            { "text": "0.50", "box": { "x": 150, "y": 180, "width": 40, "height": 20 } }
+          ]
+        },
+        {
+          "text": "TOTAL 8.24",
+          "box": { "x": 10, "y": 210, "width": 180, "height": 20 },
+          "elements": [
+            { "text": "TOTAL", "box": { "x": 10, "y": 210, "width": 60, "height": 20 } },
+            { "text": "8.24", "box": { "x": 150, "y": 210, "width": 40, "height": 20 } }
+          ]
+        }
+      ]
+    }
+  ]
+}

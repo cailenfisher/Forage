@@ -28,6 +28,7 @@
     "react-native-worklets": "0.10.1"
   },
   "devDependencies": {
+    "@types/node": "^26.2.0",
     "@types/react": "~19.2.2",
     "typescript": "~6.0.3"
   },
@@ -37,7 +38,8 @@
     "android": "expo start --android",
     "ios": "expo start --ios",
     "web": "expo start --web",
-    "lint": "expo lint"
+    "lint": "expo lint",
+    "test": "node --test 'src/parse/**/*.test.ts'"
   },
   "private": true
 }

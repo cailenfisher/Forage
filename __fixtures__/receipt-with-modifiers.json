@@ -1,0 +1,104 @@
+{
+  "text": "TEST MART\n01/15/2024\nAPPLES 1.99\nBREAD F 2.50\nCOUPON -0.50\n0.96 lb @ $1.99/lb\n1.91\n2 @ 3.49\n6.98\nMILK 3.25\nSUBTOTAL 16.13\nTOTAL 16.13",
+  "blocks": [
+    {
+      "text": "TEST MART\n01/15/2024\nAPPLES 1.99\nBREAD F 2.50\nCOUPON -0.50\n0.96 lb @ $1.99/lb\n1.91\n2 @ 3.49\n6.98\nMILK 3.25\nSUBTOTAL 16.13\nTOTAL 16.13",
+      "box": { "x": 10, "y": 0, "width": 180, "height": 350 },
+      "lines": [
+        {
+          "text": "TEST MART",
+          "box": { "x": 10, "y": 0, "width": 90, "height": 20 },
+          "elements": [
+            { "text": "TEST", "box": { "x": 10, "y": 0, "width": 40, "height": 20 } },
+            { "text": "MART", "box": { "x": 55, "y": 0, "width": 45, "height": 20 } }
+          ]
+        },
+        {
+          "text": "01/15/2024",
+          "box": { "x": 10, "y": 30, "width": 100, "height": 20 },
+          "elements": [
+            { "text": "01/15/2024", "box": { "x": 10, "y": 30, "width": 100, "height": 20 } }
+          ]
+        },
+        {
+          "text": "APPLES 1.99",
+          "box": { "x": 10, "y": 60, "width": 180, "height": 20 },
+          "elements": [
+            { "text": "APPLES", "box": { "x": 10, "y": 60, "width": 80, "height": 20 } },
+            { "text": "1.99", "box": { "x": 150, "y": 60, "width": 40, "height": 20 } }
+          ]
+        },
+        {
+          "text": "BREAD F 2.50",
+          "box": { "x": 10, "y": 90, "width": 180, "height": 20 },
+          "elements": [
+            { "text": "BREAD", "box": { "x": 10, "y": 90, "width": 60, "height": 20 } },
+            { "text": "F", "box": { "x": 90, "y": 90, "width": 10, "height": 20 } },
+            { "text": "2.50", "box": { "x": 150, "y": 90, "width": 40, "height": 20 } }
+          ]
+        },
+        {
+          "text": "COUPON -0.50",
+          "box": { "x": 10, "y": 120, "width": 180, "height": 20 },
+          "elements": [
+            { "text": "COUPON", "box": { "x": 10, "y": 120, "width": 70, "height": 20 } },
+            { "text": "-0.50", "box": { "x": 150, "y": 120, "width": 40, "height": 20 } }
+          ]
+        },
+        {
+          "text": "0.96 lb @ $1.99/lb",
+          "box": { "x": 10, "y": 150, "width": 160, "height": 20 },
+          "elements": [
+            { "text": "0.96", "box": { "x": 10, "y": 150, "width": 35, "height": 20 } },
+            { "text": "lb", "box": { "x": 50, "y": 150, "width": 25, "height": 20 } },
+            { "text": "@", "box": { "x": 80, "y": 150, "width": 15, "height": 20 } },
+            { "text": "$1.99/lb", "box": { "x": 100, "y": 150, "width": 70, "height": 20 } }
+          ]
+        },
+        {
+          "text": "1.91",
+          "box": { "x": 150, "y": 180, "width": 40, "height": 20 },
+          "elements": [{ "text": "1.91", "box": { "x": 150, "y": 180, "width": 40, "height": 20 } }]
+        },
+        {
+          "text": "2 @ 3.49",
+          "box": { "x": 10, "y": 210, "width": 80, "height": 20 },
+          "elements": [
+            { "text": "2", "box": { "x": 10, "y": 210, "width": 15, "height": 20 } },
+            { "text": "@", "box": { "x": 30, "y": 210, "width": 15, "height": 20 } },
+            { "text": "3.49", "box": { "x": 50, "y": 210, "width": 40, "height": 20 } }
+          ]
+        },
+        {
+          "text": "6.98",
+          "box": { "x": 150, "y": 240, "width": 40, "height": 20 },
+          "elements": [{ "text": "6.98", "box": { "x": 150, "y": 240, "width": 40, "height": 20 } }]
+        },
+        {
+          "text": "MILK 3.25",
+          "box": { "x": 10, "y": 270, "width": 180, "height": 20 },
+          "elements": [
+            { "text": "MILK", "box": { "x": 10, "y": 270, "width": 60, "height": 20 } },
+            { "text": "3.25", "box": { "x": 150, "y": 270, "width": 40, "height": 20 } }
+          ]
+        },
+        {
+          "text": "SUBTOTAL 16.13",
+          "box": { "x": 10, "y": 300, "width": 180, "height": 20 },
+          "elements": [
+            { "text": "SUBTOTAL", "box": { "x": 10, "y": 300, "width": 90, "height": 20 } },
+            { "text": "16.13", "box": { "x": 150, "y": 300, "width": 40, "height": 20 } }
+          ]
+        },
+        {
+          "text": "TOTAL 16.13",
+          "box": { "x": 10, "y": 330, "width": 180, "height": 20 },
+          "elements": [
+            { "text": "TOTAL", "box": { "x": 10, "y": 330, "width": 60, "height": 20 } },
+            { "text": "16.13", "box": { "x": 150, "y": 330, "width": 40, "height": 20 } }
+          ]
+        }
+      ]
+    }
+  ]
+}

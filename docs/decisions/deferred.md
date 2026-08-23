@@ -76,10 +76,23 @@ against.
 
 ## Carried over from the parser POC
 
-Accepted as ongoing tuning work, not blockers:
+The parser (`src/parse/*`) has been ported into this repo from `forage-poc`, with two changes
+made on the way in: line item and reconciliation amounts are now integer cents (were float
+dollars), and `store_item_code` is extracted from the description per ADR 0004 (previously left
+embedded in it). Accepted as ongoing tuning work, not blockers:
 
 - Fixture corpus breadth — one Walmart receipt is not a corpus.
 - Reconciliation false-negative coverage.
 - Replay path validation (addressed, needs continued exercise).
-- Per-field confidence emission from the real parser (interface exists, provider is a stub).
 - iOS / Android ML Kit geometry parity.
+- **`store_item_code` extraction is a single-fixture heuristic** — any run of 10–14 digits
+  sitting in its own OCR element within the body zone. Untested against a receipt where some
+  other multi-digit number (not a UPC) lands in that zone; needs a fixture with a false positive
+  before the pattern can be trusted.
+
+**Correction (2026-08-22):** this section previously said per-field confidence emission had "an
+interface [that] exists, provider is a stub." That was not accurate against the actual parser
+code, ported or otherwise — no `ConfidenceProvider` interface exists anywhere yet, and the
+parser emits no confidence signal, per-field or otherwise. `LineItem` has no `field_confidence`
+shape. The stub described in `docs/specs/04-review-queue.md` (returns "unknown" for every field)
+remains open work, not a wire-up — flagging here rather than leaving the drift in place.
