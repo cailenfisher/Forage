@@ -49,18 +49,18 @@ judgment. Do not bake "same class means interchangeable" into anything irreversi
 
 ## Identity and tenancy
 
-**`user_account` / `household` bootstrap on first sign-in.** Confirmed against the disposable
-test project (2026-08-23): no trigger on `auth.users`, and `public.user_account` /
-`public.household` / `public.household_member` are all empty. Google sign-in (see
-`docs/specs/05-auth.md`) produces a Supabase session with nothing behind it in `public`.
+**Invite-gated household joining.** ADR 0015 resolved the bootstrap question with the loosest
+possible version: any authenticated user can browse every household and self-join, no
+approval or invite required. That was a deliberate choice for round 1 ("no privacy or
+permissions yet"), not a final one. Picking this up means narrowing
+`household_select_authenticated` and `household_member_insert_self` (see the ADR) — likely to
+an invite code or an owner-approval step — and deciding what happens to a user who already
+self-joined a household under the open rule when that household later turns invites on.
 
-Rejected building this alongside the login gate because it bakes in a real product decision —
-does every new user get a private household by default, or is household membership
-invite-only from day one? — that isn't written down anywhere. Options to weigh when picked up:
-a `security definer` trigger on `auth.users` insert (the pattern Supabase's own quickstart uses
-for a `profiles` table) that creates `user_account` plus a starter `household` +
-`household_member` row, versus a client-driven onboarding step that lets a new user join an
-existing household by invite instead of always minting a new one.
+**Multiple households per user.** Nothing in the schema prevents a `household_member` row per
+household a user joins, but the client currently assumes one and silently takes the
+earliest-joined row (`use-household.tsx`). A real multi-household UX — switching, or scoping
+capture to "which household is this receipt for" — is unbuilt.
 
 ## Sync
 

@@ -169,6 +169,14 @@ See ADR 0006. **The FK points private → shared, never the reverse.**
 security-definer functions, so a bad scan in one household can't corrupt canonical data for
 everyone. Private tables: `household_id`-scoped, single-hop policies on the local column.
 
+**`household` itself is a deliberate, temporary exception to the private-tier read scoping**
+(see ADR 0015): any authenticated user can `select` every household (`id`/`name`/timestamps
+only, `deleted_at is null`), and can `insert` a `household_member` row for themselves into any
+household. Nothing else about a household is exposed this way — every other private-tier table
+is still scoped by `app.current_household_id_list()`, which only grows through an accepted
+membership row. This is round-1 "no privacy or permissions yet" onboarding; narrowing it is
+tracked in `docs/decisions/deferred.md`.
+
 **Column-level grants** on `price_observation` for `contributed_by_user_account_id` and
 `capture_id`. (A `price_observation_public` view is the alternative; grants are cleaner
 because there's one object rather than two to keep in sync.)

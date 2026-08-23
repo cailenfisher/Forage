@@ -37,3 +37,4 @@ separate is the whole point of this directory.
 | [0012](0012-verification-state-enforces-scope.md) | `verification_state` enforces scope | Accepted |
 | [0013](0013-provisional-products-are-a-flag.md) | Provisional products are a flag only | Accepted |
 | [0014](0014-location-is-optional.md) | Location is optional and opt-out-able | Accepted |
+| [0015](0015-open-household-bootstrap.md) | Household bootstrap is open, client-driven onboarding (round 1) | Accepted |

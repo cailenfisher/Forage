@@ -61,11 +61,24 @@ browser) would otherwise hit a native module that isn't there.
 in the Supabase project. Without it, `signInWithOAuth` completes on Google's side but the
 redirect back into the app is rejected.
 
-## Known gap: no `user_account` bootstrap
+## Household bootstrap
 
-`user_account.id` references `auth.users(id)` (see `03-data-model.md`), but nothing populates
-`user_account` (or `household` / `household_member`) when a new `auth.users` row is created —
-confirmed directly against the disposable test project: no trigger on `auth.users`, both
-tables empty. A signed-in user today has a Supabase session and nothing else. This doesn't
-break anything yet because the home screen doesn't query household-scoped data — but the first
-feature that does will need this solved first. See `docs/decisions/deferred.md`.
+`user_account.id` references `auth.users(id)` (see `03-data-model.md`). A signed-in user with no
+household yet is routed to onboarding rather than the app — see ADR 0015 for why this is a
+client-driven step rather than a trigger on `auth.users`, and for the RLS policies it required.
+
+- **State:** `src/hooks/use-household.tsx` — `HouseholdProvider` / `useHousehold`. Runs only once
+  a session exists (nested inside `AuthProvider`). On mount: upserts the caller's `user_account`
+  row (`ignoreDuplicates`, so it never overwrites `display_name` on a later sign-in), then queries
+  `household_member` for an accepted, non-deleted row. `display_name` is taken from the Google
+  profile (`user_metadata.full_name` / `.name`) when present, `null` otherwise — never fabricated.
+- **Gate:** `src/app/_layout.tsx` — `AuthGate` renders `SignInScreen` with no session; with a
+  session, wraps `HouseholdGate` in `HouseholdProvider`. `HouseholdGate` renders `AppTabs` once
+  `householdId` resolves, otherwise `HouseholdOnboardingScreen`.
+- **Onboarding UI:** `src/components/household-onboarding-screen.tsx`. Lets the user create a
+  household (name field, becomes `owner`) or join any existing one from a full list (becomes
+  `member`). Calls `useHousehold().refresh()` on success to re-run the membership check and fall
+  through the gate into `AppTabs`.
+- **MVP assumption:** one household per user. If a user somehow has more than one accepted
+  membership row, the client silently takes the earliest-joined one — see
+  `docs/decisions/deferred.md`.
