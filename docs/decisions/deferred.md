@@ -35,6 +35,43 @@ one that actually fits the in-store review queue and is the most likely first up
 
 **Threshold ownership** moving from a computed data column to configuration. See ADR 0008.
 
+## Retail locations
+
+**No write path for `retailer` / `store` yet.** Both are shared-tier and, like the rest of the
+shared catalog, writable only through security-definer functions per `03-data-model.md` — but
+unlike `product` / `retailer_product` / `product_alias`, no `create_provisional_*` function
+exists for them, and RLS grants `SELECT` only. The receipt-capture screen (first pass,
+2026-08-23) needs a real `store_id` — it's `NOT NULL` on `shopping_trip` — so one Walmart
+retailer/store was seeded directly via migration (`seed_test_store_and_receipt_bucket`) purely
+to unblock manual device testing. There is still no way for a user to add a store from the app.
+Picking this up means deciding whether store creation gets the same provisional-flag treatment
+as products (ADR 0013) or something else — ADR 0014 only settled that store selection must be
+manual, not who can create one.
+
+## Capture and ingestion
+
+From the receipt-capture screen's first pass (2026-08-23, `src/lib/receipts.ts`):
+
+- **Processing is synchronous and foreground**, not the "snap-and-forget" async pipeline
+  `01-capture-pipeline.md` describes — OCR, parse, upload, and every insert happen while the
+  screen waits, in one request/response cycle. The durability guarantee still holds (the
+  `capture_artifact` row is written before `shopping_trip`/line items are attempted), but there's
+  no background queue or retry UI yet if the trip-creation half fails after the artifact half
+  succeeds.
+- **Coupon/discount adjustments are netted into `extended_price_cent`**, not stored as their own
+  rows — there's no adjustments table on `shopping_trip_line_item`. The individual adjustment
+  amounts aren't lost (they're still in `capture_artifact.raw_output` forever), just not
+  queryable as separate rows.
+- **`tax_cent`, `total_cent`, and `receipt_number`** are not extracted by the parser and are
+  always left `null` on `shopping_trip`.
+- **`purchased_at` uses the device's local clock to interpret the printed date/time**, not
+  `store.timezone` — a real conversion was skipped rather than risk a wrong one. In practice the
+  scanning device and the store are almost always in the same timezone, but this is a known gap,
+  not a verified equivalence.
+- **`store_item_code`**, when the parser extracts one, currently goes nowhere — there's no
+  `retailer_product` row to attach it to yet (product/retailer_product resolution is unbuilt).
+  It's preserved in the raw OCR JSON, not in any queryable column.
+
 ## Catalog
 
 **Provisional state as a merge-candidate queue** for duplicate products. Natural extension of

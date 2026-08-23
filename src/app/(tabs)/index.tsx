@@ -1,3 +1,4 @@
+import { useRouter } from 'expo-router';
 import { SymbolView, type SymbolViewProps } from 'expo-symbols';
 import { Alert, Platform, Pressable, ScrollView, StyleSheet, View } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
@@ -40,6 +41,7 @@ function handleComingSoon(feature: string) {
 }
 
 export default function HomeScreen() {
+  const router = useRouter();
   const safeAreaInsets = useSafeAreaInsets();
   const insets = {
     ...safeAreaInsets,
@@ -92,7 +94,7 @@ export default function HomeScreen() {
             prices over time.
           </ThemedText>
           <Pressable
-            onPress={() => handleComingSoon('Receipt')}
+            onPress={() => router.push('/receipt-capture')}
             style={({ pressed }) => [
               styles.primaryButton,
               { backgroundColor: theme.tint },
@@ -117,7 +119,9 @@ export default function HomeScreen() {
             {QUICK_ACTIONS.map((action) => (
               <Pressable
                 key={action.key}
-                onPress={() => handleComingSoon(action.label)}
+                onPress={() =>
+                  action.key === 'receipt' ? router.push('/receipt-capture') : handleComingSoon(action.label)
+                }
                 style={({ pressed }) => [styles.actionCard, pressed && styles.pressed]}>
                 <ThemedView type="backgroundElement" style={styles.actionCardInner}>
                   <ThemedView type="backgroundSelected" style={styles.actionIcon}>
