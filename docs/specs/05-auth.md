@@ -5,27 +5,29 @@
 
 ## What exists today
 
-Google-only sign-in via Supabase Auth, gating the app on native (iOS/Android). Web is **not**
-gated — `src/app/_layout.web.tsx` renders `AppTabs` directly and never mounts `AuthProvider`.
-Web sign-in is unimplemented, not just unstyled.
+Google-only sign-in via Supabase Auth, gating the app on native (Android; iOS has no prebuild
+yet). Web is out of scope permanently (not deferred) — there is no web layout, no web sign-out
+variant, and no `web` block in `app.json`.
 
 - **Client:** `src/lib/supabase.ts`. Session persisted via `expo-secure-store`
   (`autoRefreshToken`, `persistSession`, `detectSessionInUrl: false` — native has no URL to
   detect a session from).
 - **Session state:** `src/hooks/use-auth.tsx` — `AuthProvider` / `useAuth`. Wraps
   `supabase.auth.getSession()` on mount plus `onAuthStateChange`.
-- **Gate:** `src/app/_layout.tsx` (native) — while `isLoading`, renders nothing (the existing
+- **Gate:** `src/app/_layout.tsx` — while `isLoading`, renders nothing (the existing
   `AnimatedSplashOverlay` already covers the screen for this window); once resolved, renders
-  `SignInScreen` or `AppTabs` depending on `session`. `src/app/_layout.web.tsx` is the separate,
-  ungated web root layout — see the SSR note below for why this split exists at the file level
-  rather than as a `Platform.OS` branch inside one file.
+  `SignInScreen` or the household-gated app depending on `session`.
 - **Sign-in flow:** `src/components/google-sign-in-button.tsx`. `supabase.auth.signInWithOAuth`
   with `skipBrowserRedirect: true` → `expo-web-browser`'s `openAuthSessionAsync` opens the
   Google consent screen → the `forage://google-auth` deep link (from `app.json`'s `scheme`)
   returns control to the app → access/refresh tokens are parsed from the callback URL fragment
-  and passed to `supabase.auth.setSession`.
-- **Sign-out:** `src/components/sign-out-button.tsx` (native) / `sign-out-button.web.tsx`
-  (no-op), used as a header icon on the home screen (`src/app/index.tsx`).
+  and passed to `supabase.auth.setSession`. This redirect is an OS-level custom-scheme intent
+  (compiled into the native build via the Android manifest's intent filter, not a `localhost`
+  callback), and the Supabase URL is the real hosted cloud project — so nothing in this flow
+  depends on the device being tethered to a computer; it works identically over Wi-Fi, cellular,
+  or in a release build.
+- **Sign-out:** `src/components/sign-out-button.tsx`, used as a header icon on the home screen
+  (`src/app/index.tsx`).
 - **Suppressing router navigation on the OAuth callback:** `src/app/+native-intent.tsx`.
   `forage://google-auth` is delivered to the app as an ordinary incoming URL (confirmed via
   `adb logcat`: Chrome sends it as a `VIEW`/`BROWSABLE` intent straight to `MainActivity`), so
@@ -35,25 +37,7 @@ Web sign-in is unimplemented, not just unstyled.
   `setSession` succeeds underneath it. `redirectSystemPath` returns `null` for any path
   containing `google-auth`, which per expo-router's `NativeIntent` type means "no redirection
   occurs and the app stays on the current path." Verified on-device: sign-out → sign-in with
-  Google no longer shows the error and lands correctly on `AppTabs`.
-
-### Why `_layout.tsx` / `_layout.web.tsx` are separate files, not a `Platform.OS` branch
-
-Found while verifying this feature (`expo export --platform web` and `expo start --web` both
-crashed before this split existed): `app.json`'s `web.output: "static"` makes Expo Router
-server-render every route through a Node-environment bundle. That bundle pulled in
-`src/lib/supabase.ts` even when the only code path importing it was behind a runtime
-`Platform.OS === 'web'` check in a single shared `_layout.tsx` — Metro's platform-extension
-resolution (`.web.tsx` over `.tsx`) is what actually keeps native-only modules out of a
-bundle; a runtime branch inside one file does not. Splitting into `_layout.tsx` /
-`_layout.web.tsx` fixed the export.
-
-Separately — and kept as defense in depth, since the mechanism above wasn't fully diagnosed
-past "the file split fixes it" — `src/lib/supabase.ts`'s storage adapter also no-ops on
-`Platform.OS === 'web'` rather than calling into `expo-secure-store`. `supabase-js` loads a
-session from storage the moment `createClient()` runs, not lazily on first `getSession()`
-call, so any environment that ends up constructing this client (this SSR bundle, or a real
-browser) would otherwise hit a native module that isn't there.
+  Google no longer shows the error and lands correctly on the app.
 
 ## Required Supabase dashboard config (not managed by this repo)
 
