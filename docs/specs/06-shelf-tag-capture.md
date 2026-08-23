@@ -1,12 +1,13 @@
 # Shelf tag capture
 
-> **Living document.** First pass, 2026-08-23; revised same day twice — once after the first
-> on-device test (Pixel 7) surfaced a schema-exposure bug that made every save fail, and again
-> after five real Walmart tags photographed in-store (three matched against their package
-> barcode) surfaced a live data-corruption bug in `store_item_code` handling and several
-> extraction gaps. See the "Shelf tag capture" entry in `deferred.md` for the full account of
-> what changed and why. Describes the present. If it disagrees with the code, say so rather
-> than quietly following either.
+> **Living document.** First pass, 2026-08-23; revised the same day several times — after the
+> first on-device test (Pixel 7) surfaced a schema-exposure bug that made every save fail; after
+> five real Walmart tags photographed in-store surfaced a live data-corruption bug in
+> `store_item_code` handling and several extraction gaps; and after an online QR-resolution
+> feature (ADR 0016) was built, tested against a real device, and abandoned the same day (ADR
+> 0017) once it hit both bot detection and an unscrapable page structure. See the "Shelf tag
+> capture" entry in `deferred.md` for the full account of what changed and why. Describes the
+> present. If it disagrees with the code, say so rather than quietly following either.
 
 ## What this is
 
@@ -167,7 +168,15 @@ decodes, its raw result is written to a **second** `capture_artifact` row
 (`parser_version = BARCODE_SCAN_VERSION`) — same "one row per parser run" model as the OCR
 artifact (ADR 0002), landed durably alongside it, not merged into the OCR artifact's
 `raw_output`. Nothing is written when nothing decodes; an unreadable or absent QR is a normal
-outcome (see `deferred.md`), not worth a permanent empty row on every capture.
+outcome (see `deferred.md`), not worth a permanent empty row on every capture. The decoded QR's
+path segment also feeds `retailer_product.tag_identifier.qr_token` on the create path — see
+"Resolution flow" above.
+
+Per ADR 0017: this project **does not** fetch or resolve the decoded QR shortlink online — that
+was tried (ADR 0016) and abandoned the same day after real-device testing hit both Walmart's
+bot detection and a page structure unsuitable for static scraping. The raw decoded URL is kept
+for a possible future human-in-the-loop use (opening it in a system browser for a person to
+review), not for any automated resolution. See `deferred.md` for the full trail.
 
 `price_kind` (`regular` / `sale` / `clearance`) is a manual toggle on the review screen,
 defaulting to `regular` — shelf tag color/format usually signals this but isn't something OCR

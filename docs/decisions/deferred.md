@@ -281,11 +281,66 @@ based on:
   frozen this machine before); the user needs to run prebuild/build themselves. Section 5d's
   caution about decode difficulty (OpenCV needed cropping/upscaling/CLAHE for the glossy,
   angled milk tag QR; ML Kit is expected to do better but is unverified) is therefore still
-  fully open. The further idea of resolving the shortlink online for full product identity was
-  **not** built — it remains a **proposal requiring its own ADR** before any building, per the
-  original handoff: it would be the project's first outbound third-party network dependency, and
-  needs conditions around never blocking capture, failing silently offline, and treating the
-  result as provisional evidence, not ground truth.
+  fully open.
+- **Built, tested, and abandoned same day (2026-08-23) — QR shortlink resolution, ADR 0016 →
+  ADR 0017.** Online resolution (fetching the decoded QR shortlink to enrich the catalog with a
+  better description) got its required ADR (0016), was built same-day scoped deliberately narrow
+  (alias enrichment only — full identity resolution has no taxonomy to resolve against, since
+  `product_class` and `brand` both have zero rows in this database), and was real-device tested
+  the same day. Two independent, unfixable problems killed it: Walmart's bot detection blocked
+  every automated request tried (the app's original `HEAD`, its `GET` fallback, and a manual
+  fetch from an unrelated client — three for three), and even an unblocked page turned out to be
+  a dynamic, JS-rendered product-family page with flavor/size as interactive chips, not something
+  a static fetch could read the exact SKU off of. **ADR 0017 records the full finding and
+  reverses the decision** — `src/lib/qrResolution.ts`, `src/lib/walmartUrl.ts` (+ test),
+  `resolveShelfTagQr`, the QR-resolution debug card, and the `expo-network` dependency are all
+  removed. Local QR **capture** (decode + permanent raw storage in its own `capture_artifact`
+  row, plus `tag_identifier.qr_token`) was never part of ADR 0016 and is unaffected — see the
+  entry above. Read ADR 0017 for the complete writeup rather than this summary.
+- **Fixed (2026-08-23) — `scanFromURLAsync` barcode results were never recognized as QR codes,
+  on-device, despite decoding correctly.** Found during real-device debugging (Pixel 7) of "no
+  QR detected" on the ramen tag. Two hypotheses were pursued and both were **wrong** — worth
+  recording precisely, because the debugging trail is as informative as the fix:
+  1. *First hypothesis: tag-photo quality (too small in frame, glare, angle).* Killed decisively
+     by pushing a clean, near-full-frame synthetic QR onto the device and running it through the
+     same pipeline — it also read "no QR decoded," which a real quality problem couldn't explain.
+  2. *Second hypothesis: `scanFromURLAsync` loads the bitmap via Glide
+     (`expo-image-loader`'s `ImageLoaderInterface`) instead of ML Kit's own `InputImage.fromFilePath`
+     (which `expo-mlkit-ocr`'s OCR path uses, confirmed by reading both native sources side by
+     side) — theorized a Glide/hardware-bitmap incompatibility.* Also wrong, and disproven by
+     the user's own follow-up: an earlier real capture's `capture_artifact.raw_output` had
+     already recorded `{"data": "w-mt.co/q/300ctBZ0VD4J3-ZDQBP", "type": 256}` — the scan had
+     been finding the QR correctly the whole time.
+  3. **Actual root cause:** `type: 256` is ML Kit's raw `Barcode.FORMAT_QR_CODE` integer
+     constant (`0x0100`), not the string `"qr"`. `BarCodeScannerResultSerializer.kt` (used by
+     `scanFromURLAsync`) writes `putInt("type", result.type)` — the raw format — while the
+     *live* `CameraView`'s `onBarcodeScanned` path (`ExpoCameraView.kt`) separately calls
+     `BarcodeType.mapFormatToString(barcode.type)` before handing results to JS.
+     `expo-camera`'s own `.d.ts` declares `type: string` for both, which is simply incorrect for
+     `scanFromURLAsync` — a real upstream type-declaration bug, not a training-data assumption
+     this project made. This project's own `qrBarcode = barcodeResults.find(b => b.type === 'qr')`
+     was therefore comparing a string literal against a number and was **always** false,
+     regardless of platform/device/photo — the scan step (`scanBarcodes` in `scanBarcode.ts`) was
+     correct and had been working the entire time; only the JS-side type comparison built on top
+     of it was broken. Fixed by normalizing at the boundary:
+     `normalizeBarcodeType` (`src/ocr/barcodeType.ts`, kept import-free of `expo-*` so it's
+     unit-testable — the exact table lives there, reversed from `expo-camera`'s own
+     `BarcodeType.mapToBarcode()`) converts the raw ML Kit int to the documented string shape
+     before it ever reaches `BarcodeScanGuess`, so every downstream comparison (`.type === 'qr'`
+     in `shelf-tag-capture-screen.tsx`, the `qrToken`/`tag_identifier` wiring in `shelfTags.ts`)
+     needed no changes at all. Regression-tested against the exact real value (`256 -> 'qr'`)
+     pulled from that `capture_artifact` row, not a synthetic guess.
+  4. **Process note:** two debug-variant functions (`resolveShelfTagQrShortlinkDebug`,
+     `scanBarcodesDebug`) and a debug card on the review screen were built specifically to make
+     this kind of on-device failure checkable without a native rebuild — and that's exactly what
+     let the second, wrong hypothesis (a Glide/ML-Kit bitmap issue) get discarded quickly instead
+     of chasing a native fix for a bug that didn't exist there. The eventual fix required no
+     native changes at all, only a JS-side normalization miss. Both debug variants and the debug
+     card were removed once QR resolution itself was abandoned (ADR 0017) and there was nothing
+     left to debug with them — `scanBarcode.ts` now only exports the plain `scanBarcodes`, which
+     still carries the `normalizeBarcodeType` fix internally. Worth remembering the pattern next
+     time a "silent no-result" on a real device tempts a native-layer explanation first: a cheap,
+     removable debug variant beats guessing.
 - **Deferred (2026-08-23, explicit decision) — implied package size from price ÷ unit price.**
   When a tag prints both a total price and a per-unit price, package size is recoverable even
   though the tag never states it (worked twice against real packages: ramen's 46¢ ÷ 15.3¢/oz

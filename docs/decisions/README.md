@@ -38,3 +38,5 @@ separate is the whole point of this directory.
 | [0013](0013-provisional-products-are-a-flag.md) | Provisional products are a flag only | Accepted |
 | [0014](0014-location-is-optional.md) | Location is optional and opt-out-able | Accepted |
 | [0015](0015-open-household-bootstrap.md) | Household bootstrap is open, client-driven onboarding (round 1) | Accepted |
+| [0016](0016-qr-resolution-is-out-of-band-alias-enrichment.md) | QR resolution is out-of-band, best-effort alias enrichment, not identity linking | Superseded by 0017 |
+| [0017](0017-qr-shortlink-resolution-abandoned.md) | Online QR shortlink resolution abandoned; local capture and storage stand | Accepted |

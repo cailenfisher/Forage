@@ -68,6 +68,7 @@ export function ShelfTagCaptureScreen() {
   const [result, setResult] = useState<SaveShelfTagObservationResult | null>(null);
 
   const selectedStore = stores.find((store) => store.id === selectedStoreId) ?? null;
+  const qrBarcode = barcodeResults.find((barcode) => barcode.type === 'qr') ?? null;
 
   // Stores and units are both small, static-ish reference lists — loaded
   // once on entering review, same pattern the receipt screen uses for stores.
@@ -199,7 +200,6 @@ export function ShelfTagCaptureScreen() {
     setError(null);
     setStep('saving');
     try {
-      const qrResult = barcodeResults.find((barcode) => barcode.type === 'qr') ?? null;
       const saved = await saveShelfTagObservation({
         householdId,
         userId: session.user.id,
@@ -215,7 +215,7 @@ export function ShelfTagCaptureScreen() {
         unitOfMeasureId: sizeText.trim() ? selectedUnitId : null,
         tagFooter: extraction?.tagFooter ?? null,
         barcodeResults,
-        qrToken: qrResult ? qrPathSegment(qrResult.data) : null,
+        qrToken: qrBarcode ? qrPathSegment(qrBarcode.data) : null,
       });
       setResult(saved);
       setStep('done');
@@ -228,6 +228,7 @@ export function ShelfTagCaptureScreen() {
     ocrResult,
     extraction,
     barcodeResults,
+    qrBarcode,
     selectedStore,
     householdId,
     session?.user.id,

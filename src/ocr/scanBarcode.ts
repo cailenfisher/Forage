@@ -1,5 +1,7 @@
 import { scanFromURLAsync, type BarcodeType } from 'expo-camera';
 
+import { normalizeBarcodeType } from './barcodeType';
+
 // Bumped whenever the decode/parsing logic in this file changes
 // meaningfully (not the expo-camera package version) — same convention as
 // SHELF_TAG_EXTRACTOR_VERSION, so a capture_artifact row produced by this
@@ -14,15 +16,16 @@ export type BarcodeScanGuess = {
 
 // Decodes barcodes from a static image file (Camera.scanFromURLAsync) — not
 // a live camera feed, and not the same engine as the OCR text recognizer in
-// recognize.ts. Best-effort: a shelf tag photo with no QR, or one too
-// small/blurry to read, is a normal outcome (per docs/decisions/deferred.md,
-// decode difficulty for these tags varies sharply and hasn't been verified
-// against a real device yet), so failures resolve to an empty array rather
-// than throwing and interrupting capture.
+// recognize.ts. `result.type` is normalized through normalizeBarcodeType
+// (barcodeType.ts) — scanFromURLAsync returns ML Kit's raw numeric format
+// constant here despite expo-camera's own types declaring it a string; see
+// that file for the full story. Best-effort: a shelf tag photo with no QR
+// is a normal outcome, so failures resolve to an empty array rather than
+// throwing and interrupting capture.
 export async function scanBarcodes(uri: string, barcodeTypes?: BarcodeType[]): Promise<BarcodeScanGuess[]> {
   try {
     const results = await scanFromURLAsync(uri, barcodeTypes);
-    return results.map((result) => ({ type: result.type, data: result.data }));
+    return results.map((result) => ({ type: normalizeBarcodeType(result.type), data: result.data }));
   } catch {
     return [];
   }
