@@ -48,8 +48,23 @@ async function getUnitOfMeasureIds(codes: string[]): Promise<Record<string, stri
   return Object.fromEntries((data ?? []).map((row) => [row.code as string, row.id as string]));
 }
 
-function bufferToHex(buffer: ArrayBuffer): string {
-  return [...new Uint8Array(buffer)].map((byte) => byte.toString(16).padStart(2, '0')).join('');
+const BASE64_CHARS = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/';
+
+// Plain string encode so the bytes never have to cross into a native module as
+// an ArrayBuffer — see the comment at the digestStringAsync call below.
+function bufferToBase64(buffer: ArrayBuffer): string {
+  const bytes = new Uint8Array(buffer);
+  let result = '';
+  for (let i = 0; i < bytes.length; i += 3) {
+    const b0 = bytes[i];
+    const b1 = bytes[i + 1];
+    const b2 = bytes[i + 2];
+    result += BASE64_CHARS[b0 >> 2];
+    result += BASE64_CHARS[((b0 & 0x03) << 4) | (b1 === undefined ? 0 : b1 >> 4)];
+    result += b1 === undefined ? '=' : BASE64_CHARS[((b1 & 0x0f) << 2) | (b2 === undefined ? 0 : b2 >> 6)];
+    result += b2 === undefined ? '=' : BASE64_CHARS[b2 & 0x3f];
+  }
+  return result;
 }
 
 async function uploadReceiptImage(params: {
@@ -60,7 +75,11 @@ async function uploadReceiptImage(params: {
   const extension = params.uri.split('.').pop()?.toLowerCase() || 'jpg';
   const storageKey = `${params.householdId}/${params.captureId}.${extension}`;
   const arrayBuffer = await fetch(params.uri).then((response) => response.arrayBuffer());
-  const contentHash = bufferToHex(await Crypto.digest(Crypto.CryptoDigestAlgorithm.SHA256, arrayBuffer));
+  // Crypto.digest() needs a JSI-attached ArrayBuffer to hand to the native Kotlin side.
+  // The ArrayBuffer fetch() hands back for a local file:// URI on Android isn't one, and
+  // the digest call throws "no ArrayBuffer attached". digestStringAsync only ever crosses
+  // the bridge as a plain string, so hash the base64 encoding instead of the raw bytes.
+  const contentHash = await Crypto.digestStringAsync(Crypto.CryptoDigestAlgorithm.SHA256, bufferToBase64(arrayBuffer));
 
   const { error } = await supabase.storage
     .from('receipt-images')
