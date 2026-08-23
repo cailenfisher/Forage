@@ -1,42 +1,9 @@
-import * as Crypto from 'expo-crypto';
-
 import { supabase } from '@/lib/supabase';
+import { uploadCaptureImage } from '@/lib/storage';
 import type { HeaderInfo, LineItem, ParsedReceipt, ReconciliationResult } from '@/parse';
 import { PARSER_VERSION } from '@/parse/version';
 
 import type { OcrResult } from '@/parse/types';
-
-export type StoreOption = {
-  id: string;
-  name: string;
-  retailerName: string;
-};
-
-// Every store in the shared catalog — there's no household scoping on retail
-// location data, and (per docs/decisions/deferred.md) no in-app way to add a
-// new one yet, so this list is whatever's been seeded directly in Postgres.
-export async function listStores(): Promise<StoreOption[]> {
-  const { data, error } = await supabase
-    .from('store')
-    .select('id, name, retailer:retailer(name)')
-    .order('name', { ascending: true });
-  if (error) throw error;
-
-  // supabase-js infers embedded to-one relations as arrays without generated
-  // DB types wired into the client (see src/lib/supabase.ts); the actual
-  // response shape is a single object per the retailer_id foreign key.
-  const rows = (data ?? []) as unknown as Array<{
-    id: string;
-    name: string | null;
-    retailer: { name: string } | null;
-  }>;
-
-  return rows.map((row) => ({
-    id: row.id,
-    name: row.name ?? '(unnamed store)',
-    retailerName: row.retailer?.name ?? 'Unknown retailer',
-  }));
-}
 
 async function getUnitOfMeasureIds(codes: string[]): Promise<Record<string, string>> {
   const uniqueCodes = [...new Set(codes)];
@@ -46,47 +13,6 @@ async function getUnitOfMeasureIds(codes: string[]): Promise<Record<string, stri
   if (error) throw error;
 
   return Object.fromEntries((data ?? []).map((row) => [row.code as string, row.id as string]));
-}
-
-const BASE64_CHARS = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/';
-
-// Plain string encode so the bytes never have to cross into a native module as
-// an ArrayBuffer — see the comment at the digestStringAsync call below.
-function bufferToBase64(buffer: ArrayBuffer): string {
-  const bytes = new Uint8Array(buffer);
-  let result = '';
-  for (let i = 0; i < bytes.length; i += 3) {
-    const b0 = bytes[i];
-    const b1 = bytes[i + 1];
-    const b2 = bytes[i + 2];
-    result += BASE64_CHARS[b0 >> 2];
-    result += BASE64_CHARS[((b0 & 0x03) << 4) | (b1 === undefined ? 0 : b1 >> 4)];
-    result += b1 === undefined ? '=' : BASE64_CHARS[((b1 & 0x0f) << 2) | (b2 === undefined ? 0 : b2 >> 6)];
-    result += b2 === undefined ? '=' : BASE64_CHARS[b2 & 0x3f];
-  }
-  return result;
-}
-
-async function uploadReceiptImage(params: {
-  householdId: string;
-  captureId: string;
-  uri: string;
-}): Promise<{ storageBucket: string; storageKey: string; byteSize: number; contentHash: string }> {
-  const extension = params.uri.split('.').pop()?.toLowerCase() || 'jpg';
-  const storageKey = `${params.householdId}/${params.captureId}.${extension}`;
-  const arrayBuffer = await fetch(params.uri).then((response) => response.arrayBuffer());
-  // Crypto.digest() needs a JSI-attached ArrayBuffer to hand to the native Kotlin side.
-  // The ArrayBuffer fetch() hands back for a local file:// URI on Android isn't one, and
-  // the digest call throws "no ArrayBuffer attached". digestStringAsync only ever crosses
-  // the bridge as a plain string, so hash the base64 encoding instead of the raw bytes.
-  const contentHash = await Crypto.digestStringAsync(Crypto.CryptoDigestAlgorithm.SHA256, bufferToBase64(arrayBuffer));
-
-  const { error } = await supabase.storage
-    .from('receipt-images')
-    .upload(storageKey, arrayBuffer, { contentType: extension === 'jpg' ? 'image/jpeg' : `image/${extension}` });
-  if (error) throw error;
-
-  return { storageBucket: 'receipt-images', storageKey, byteSize: arrayBuffer.byteLength, contentHash };
 }
 
 function tripReconciliationStatus(status: ReconciliationResult['status']): 'balanced' | 'discrepancy' | 'pending' {
@@ -178,7 +104,8 @@ export async function saveReceiptTrip(params: SaveReceiptTripParams): Promise<Sa
   if (captureError || !capture) throw captureError ?? new Error('Failed to create capture');
   const captureId = capture.id as string;
 
-  const { storageBucket, storageKey, byteSize, contentHash } = await uploadReceiptImage({
+  const { storageBucket, storageKey, byteSize, contentHash } = await uploadCaptureImage({
+    bucket: 'receipt-images',
     householdId,
     captureId,
     uri: imageUri,

@@ -119,9 +119,11 @@ export default function HomeScreen() {
             {QUICK_ACTIONS.map((action) => (
               <Pressable
                 key={action.key}
-                onPress={() =>
-                  action.key === 'receipt' ? router.push('/receipt-capture') : handleComingSoon(action.label)
-                }
+                onPress={() => {
+                  if (action.key === 'receipt') router.push('/receipt-capture');
+                  else if (action.key === 'shelf-tag') router.push('/shelf-tag-capture');
+                  else handleComingSoon(action.label);
+                }}
                 style={({ pressed }) => [styles.actionCard, pressed && styles.pressed]}>
                 <ThemedView type="backgroundElement" style={styles.actionCardInner}>
                   <ThemedView type="backgroundSelected" style={styles.actionIcon}>

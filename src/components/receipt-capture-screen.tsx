@@ -14,15 +14,12 @@ import { useTheme } from '@/hooks/use-theme';
 import { isOcrSupported, runOcr } from '@/ocr/recognize';
 import { parseReceipt } from '@/parse';
 import type { LineItem, ParsedReceipt, ReconciliationResult } from '@/parse';
-import { lineItemExtendedPriceCent, listStores, saveReceiptTrip, type StoreOption } from '@/lib/receipts';
+import { lineItemExtendedPriceCent, saveReceiptTrip } from '@/lib/receipts';
+import { listStores, type StoreOption } from '@/lib/stores';
+import { formatCurrency } from '@/lib/currency';
 import type { OcrResult } from '@/parse/types';
 
 type Step = 'capture' | 'processing' | 'review' | 'saving' | 'done';
-
-function formatCurrency(cents: number): string {
-  const sign = cents < 0 ? '−' : '';
-  return `${sign}$${(Math.abs(cents) / 100).toFixed(2)}`;
-}
 
 function statusLabel(status: ReconciliationResult['status']): string {
   if (status === 'match') return 'Totals match';
