@@ -1,6 +1,7 @@
 import { supabase } from '@/lib/supabase';
 import { uploadCaptureImage } from '@/lib/storage';
-import { SHELF_TAG_EXTRACTOR_VERSION } from '@/parse/shelfTag';
+import { BARCODE_SCAN_VERSION, type BarcodeScanGuess } from '@/ocr/scanBarcode';
+import { SHELF_TAG_EXTRACTOR_VERSION, type ShelfTagFooterGuess } from '@/parse/shelfTag';
 import type { OcrResult } from '@/parse/types';
 
 export type UnitOfMeasureOption = {
@@ -50,7 +51,41 @@ export type SaveShelfTagObservationParams = {
   priceKind: 'regular' | 'sale' | 'clearance';
   sizeQuantity: number | null;
   unitOfMeasureId: string | null;
+  // The "FAC <n> CAP <n> [<fragment>]" footer read off the tag, if any (see
+  // ShelfTagFooterGuess) — feeds tag_identifier below, never store_item_code.
+  tagFooter: ShelfTagFooterGuess | null;
+  // Every barcode decoded from the capture photo (see scanBarcode.ts),
+  // regardless of type — written verbatim to its own capture_artifact row
+  // when non-empty, so raw decode output is retained permanently under ADR
+  // 0002 even if only the QR type ends up feeding tag_identifier below.
+  barcodeResults: BarcodeScanGuess[];
+  // The path segment of a decoded QR payload (see qrPathSegment) — feeds
+  // tag_identifier.qr_token below. Passed separately from barcodeResults
+  // because extracting "the" QR token from possibly-several decoded
+  // barcodes is a UI-layer judgment call, not this function's job.
+  qrToken: string | null;
 };
+
+// Proposal in docs/decisions/deferred.md ("tag identifier storage"): a
+// tag-printed code is real signal for match verification and candidate
+// narrowing, but never sufficient for a match on its own, and never a store
+// item code (see ADR 0004 and the storeItemCode incident writeup in
+// deferred.md — a UPC fragment used as an exact-match key silently
+// mis-attaches price_observation rows on any collision). Deliberately
+// excludes FAC/CAP/corner-badge/date, which are per-capture facts already
+// retained permanently in capture_artifact, not chain-scoped facts that
+// belong on retailer_product.
+function buildTagIdentifier(tagFooter: ShelfTagFooterGuess | null, qrToken: string | null): Record<string, string> | null {
+  const identifier: Record<string, string> = {};
+  if (tagFooter) {
+    identifier.tag_format = tagFooter.format;
+    if (tagFooter.format === 'eink' && tagFooter.fragment) {
+      identifier.upc_fragment = tagFooter.fragment;
+    }
+  }
+  if (qrToken) identifier.qr_token = qrToken;
+  return Object.keys(identifier).length > 0 ? identifier : null;
+}
 
 export type SaveShelfTagObservationResult = {
   captureId: string;
@@ -75,6 +110,9 @@ export async function saveShelfTagObservation(
     priceKind,
     sizeQuantity,
     unitOfMeasureId,
+    tagFooter,
+    barcodeResults,
+    qrToken,
   } = params;
   const capturedAt = new Date();
 
@@ -125,6 +163,24 @@ export async function saveShelfTagObservation(
   });
   if (artifactError) throw artifactError;
 
+  // A second, independent artifact row for the barcode scan — same "one row
+  // per parser run" model as the OCR artifact above (ADR 0002), not a
+  // variant of it: different raw_output shape, different parser_version
+  // lineage. Only written when something actually decoded; an empty result
+  // isn't worth a permanent row on every single capture. Durable alongside
+  // the OCR artifact, ahead of the best-effort block below, because this is
+  // raw sensor data, not a resolution outcome.
+  if (barcodeResults.length > 0) {
+    const { error: barcodeArtifactError } = await supabase.from('capture_artifact').insert({
+      capture_id: captureId,
+      household_id: householdId,
+      raw_output: { barcodes: barcodeResults },
+      parser_version: BARCODE_SCAN_VERSION,
+      parsed_at: capturedAt.toISOString(),
+    });
+    if (barcodeArtifactError) throw barcodeArtifactError;
+  }
+
   // Best-effort from here down. If this throws, the capture and its raw
   // artifact above are already safely stored — replay is a supported
   // operation, even though this first pass has no retry UI for it yet.
@@ -148,6 +204,7 @@ export async function saveShelfTagObservation(
           p_product_id: null,
           p_receipt_description: trimmedDescription,
           p_department: null,
+          p_tag_identifier: buildTagIdentifier(tagFooter, qrToken),
         })
         .single();
       if (retailerProductError || !retailerProduct) {

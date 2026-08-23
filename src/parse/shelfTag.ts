@@ -79,6 +79,28 @@ export type ShelfTagUnitPriceGuess = {
   displayAmount: string;
   unitToken: string;
   unitCode: string | null;
+  // True when unitCode is "each" — the tag is printing the same total price
+  // a second time as a "per-unit" annotation (an item priced by the each
+  // has no other price to give), not new information. Two of four real
+  // tags in the shelf-tag evidence do this; see docs/decisions/deferred.md.
+  // The review screen uses this to skip a redundant "tag also shows" hint.
+  isDegenerate: boolean;
+};
+
+export type ShelfTagFooterFormat = 'eink' | 'paper';
+
+export type ShelfTagFooterGuess = {
+  format: ShelfTagFooterFormat;
+  facing: number;
+  capacity: number;
+  // The trailing 4-digit token after "CAP <n>" on an e-ink tag. Confirmed
+  // on three independent tag/package pairs to be the tail of the package
+  // UPC-A item reference (drop the check digit, take the last four) — see
+  // docs/decisions/deferred.md. This is NOT a store item code and must
+  // never be treated as one (false positives here are silent
+  // price_observation mis-attributions, per ADR 0004 and non-negotiable
+  // #3). Null on a paper tag, which prints no such token.
+  fragment: string | null;
 };
 
 export type ShelfTagSizeGuess = {
@@ -98,11 +120,12 @@ export type ShelfTagExtraction = {
   // A standalone "<number> <unit>" package size, distinct from the unit
   // price fraction above.
   size: ShelfTagSizeGuess | null;
-  // Digit run pulled from its own OCR element — same heuristic and same
-  // caveats as the receipt parser's store_item_code extraction (see
-  // docs/decisions/deferred.md): untested against a tag where an unrelated
-  // multi-digit number would produce a false positive.
-  storeItemCode: string | null;
+  // The "FAC <n> CAP <n> [<fragment>]" footer, when present. Never a store
+  // item code (see ShelfTagFooterGuess) — there is currently no known way
+  // to extract a real store item code from a Walmart shelf tag, so this
+  // project deliberately does not try. The storeItemCode field on the
+  // review screen is manual-entry only; see docs/decisions/deferred.md.
+  tagFooter: ShelfTagFooterGuess | null;
   // Best-effort guess at the product name, always user-editable, never the
   // value actually written unless the user leaves it as-is.
   descriptionGuess: string | null;
@@ -159,6 +182,21 @@ function rowHasSplitPricePair(row: Row): boolean {
   return false;
 }
 
+// Known 1- or 2-word unit tokens (the UNIT_ALIASES keys), longest first, so
+// a two-word unit like "FL OZ" is captured whole. A generic greedy/lazy
+// character class can't do this correctly either way: lazy stops at the
+// first word ("FL"), confirmed as a real bug against the milk tag's ground
+// truth ("PER FL OZ" — see docs/decisions/deferred.md); greedy overreaches
+// into trailing unrelated words when the class allows spaces. Falls back to
+// a single bare word (no spaces) for a unit the table doesn't recognize, so
+// an unrecognized-but-printed unit still surfaces verbatim (unitCode null,
+// per non-negotiable #2) instead of being silently dropped.
+const KNOWN_UNIT_TOKENS = Object.keys(UNIT_ALIASES)
+  .sort((a, b) => b.length - a.length)
+  .map((token) => token.replace(/ /g, '\\s+'))
+  .join('|');
+const UNIT_TOKEN = `(?:${KNOWN_UNIT_TOKENS}|[A-Za-z][A-Za-z.]{0,10})`;
+
 // "$1.99/LB", "25.5¢/OZ", "0.25 per oz" — an amount (dollars or cents,
 // one or more decimal digits, symbol optional) immediately followed by a
 // unit, standing for "price per that unit". Never parsed into cents: a
@@ -166,13 +204,51 @@ function rowHasSplitPricePair(row: Row): boolean {
 // through the dollars-and-exactly-two-decimals shape the rest of this
 // project's money handling assumes without either rejecting valid data or
 // fabricating precision that wasn't printed. Purely a display hint.
-const UNIT_PRICE_PATTERN = /(\$?\d+(?:\.\d+)?¢?)\s*(?:\/|per)\s*([A-Za-z][A-Za-z. ]{0,10}?)(?=[\s,;)\n]|$)/i;
+const UNIT_PRICE_PATTERN = new RegExp(`(\\$?\\d+(?:\\.\\d+)?¢?)\\s*(?:\\/|per)\\s*(${UNIT_TOKEN})(?=[\\s,;)\\n]|$)`, 'i');
 
-function extractUnitPrice(text: string): ShelfTagUnitPriceGuess | null {
+// A trailing "/<unit>" or "per <unit>" with no leading amount — completes a
+// unit price whose amount comes from a split dollars+cents row pair
+// instead (e.g. ["$3", "67", "PER", "EA"]). Without this, UNIT_PRICE_PATTERN
+// run against the flattened text matches the cents element itself as the
+// amount ("67 PER EA" -> displayAmount "67"), which is wrong on any tag that
+// splits its unit price the same way it splits its main price — confirmed
+// on a real device tag. See docs/decisions/deferred.md.
+const PER_UNIT_SUFFIX_PATTERN = new RegExp(`^(?:\\/|per)\\s*(${UNIT_TOKEN})(?=[\\s,;)\\n]|$)`, 'i');
+
+function rowSplitUnitPrice(row: Row): ShelfTagUnitPriceGuess | null {
+  for (let i = 0; i < row.elements.length - 1; i++) {
+    const dollarsMatch = DOLLARS_ONLY_PATTERN.exec(row.elements[i].text.trim());
+    const centsMatch = dollarsMatch ? CENTS_ONLY_PATTERN.exec(row.elements[i + 1].text.trim()) : null;
+    if (!dollarsMatch || !centsMatch) continue;
+    const rest = row.elements
+      .slice(i + 2)
+      .map((element) => element.text)
+      .join(' ')
+      .trim();
+    const suffixMatch = PER_UNIT_SUFFIX_PATTERN.exec(rest);
+    if (!suffixMatch) continue;
+    const displayAmount = `$${dollarsMatch[1]}.${centsMatch[1].padStart(2, '0')}`;
+    const unitToken = suffixMatch[1].trim();
+    const unitCode = normalizeUnitToken(unitToken);
+    return { displayAmount, unitToken, unitCode, isDegenerate: unitCode === 'each' };
+  }
+  return null;
+}
+
+function extractUnitPrice(text: string, rows: Row[]): ShelfTagUnitPriceGuess | null {
+  // Geometry first: a row-adjacent split pair is a more specific match than
+  // the flattened-text pattern below, and must win when both could fire —
+  // see PER_UNIT_SUFFIX_PATTERN.
+  for (const row of rows) {
+    const split = rowSplitUnitPrice(row);
+    if (split) return split;
+  }
+
   const match = UNIT_PRICE_PATTERN.exec(text);
   if (!match) return null;
   const unitToken = match[2].trim();
-  return { displayAmount: match[1].trim(), unitToken, unitCode: normalizeUnitToken(unitToken) };
+  const unitCode = normalizeUnitToken(unitToken);
+  return { displayAmount: match[1].trim(), unitToken, unitCode, isDegenerate: unitCode === 'each' };
 }
 
 // "16 OZ", "12 CT", "1.5 LB" — a bare quantity + unit, i.e. the package
@@ -191,16 +267,28 @@ function extractSize(text: string, unitPrice: ShelfTagUnitPriceGuess | null): Sh
   return { quantity, unitToken, unitCode: normalizeUnitToken(unitToken) };
 }
 
-// A standalone digit run of plausible UPC/EAN/PLU length, sitting in its
-// own OCR element rather than embedded in surrounding text. Longest match
-// wins on the assumption a full UPC/EAN outranks a shorter PLU or a stray
-// number — an assumption, not a certainty; see the module doc comment.
-function extractStoreItemCode(elements: OcrElement[]): string | null {
-  const candidates = elements
-    .map((element) => element.text.trim())
-    .filter((text) => /^\d{4,14}$/.test(text));
-  if (candidates.length === 0) return null;
-  return candidates.reduce((longest, candidate) => (candidate.length > longest.length ? candidate : longest));
+// "FAC <n> CAP <n> [<fragment>]" — anchored on the literal facing/capacity
+// tokens rather than scanning for digit runs, so a multi-digit capacity
+// (e.g. "CAP 1440") can never be confused with the trailing fragment: the
+// fragment is whatever four-digit token immediately follows CAP <n>, by
+// position, not by being "the longest digit run on the tag" (the previous
+// heuristic here, which is exactly what made that confusion possible).
+// Confirmed against three real e-ink tags (fragment present) and one real
+// paper tag (no fragment — loose bulk produce has no UPC to fragment). See
+// docs/decisions/deferred.md. Returns null when the tag has no such footer
+// at all, per non-negotiable #2 — never guessed.
+const TAG_FOOTER_PATTERN = /\bFAC\s+(\d+)\s+CAP\s+(\d+)(?:\s+(\d{4})\b)?/i;
+
+function extractTagFooter(text: string): ShelfTagFooterGuess | null {
+  const match = TAG_FOOTER_PATTERN.exec(text);
+  if (!match) return null;
+  const fragment = match[3] ?? null;
+  return {
+    format: fragment ? 'eink' : 'paper',
+    facing: parseInt(match[1], 10),
+    capacity: parseInt(match[2], 10),
+    fragment,
+  };
 }
 
 function isNoiseRow(row: Row): boolean {
@@ -210,6 +298,7 @@ function isNoiseRow(row: Row): boolean {
   if (UNIT_PRICE_PATTERN.test(trimmed)) return true;
   if (parsePrice(trimmed) !== null) return true;
   if (rowHasSplitPricePair(row)) return true;
+  if (TAG_FOOTER_PATTERN.test(trimmed)) return true;
   return false;
 }
 
@@ -233,13 +322,13 @@ export function extractShelfTagFields(ocrResult: OcrResult): ShelfTagExtraction 
   const rows = reconstructRows(ocrResult);
   const text = ocrResult.text;
 
-  const unitPrice = extractUnitPrice(text);
+  const unitPrice = extractUnitPrice(text, rows);
 
   return {
     priceCent: extractPrice(elements, rows),
     unitPrice,
     size: extractSize(text, unitPrice),
-    storeItemCode: extractStoreItemCode(elements),
+    tagFooter: extractTagFooter(text),
     descriptionGuess: extractDescriptionGuess(rows),
   };
 }

@@ -13,6 +13,7 @@ import { useHousehold } from '@/hooks/use-household';
 import { useTheme } from '@/hooks/use-theme';
 import { centsToDollarsInput } from '@/lib/currency';
 import { isOcrSupported, runOcr } from '@/ocr/recognize';
+import { qrPathSegment, scanBarcodes, type BarcodeScanGuess } from '@/ocr/scanBarcode';
 import { parsePrice } from '@/parse';
 import { extractShelfTagFields, type ShelfTagExtraction } from '@/parse/shelfTag';
 import {
@@ -47,6 +48,7 @@ export function ShelfTagCaptureScreen() {
   const [image, setImage] = useState<PickedImage | null>(null);
   const [ocrResult, setOcrResult] = useState<OcrResult | null>(null);
   const [extraction, setExtraction] = useState<ShelfTagExtraction | null>(null);
+  const [barcodeResults, setBarcodeResults] = useState<BarcodeScanGuess[]>([]);
 
   const [stores, setStores] = useState<StoreOption[]>([]);
   const [storesLoading, setStoresLoading] = useState(false);
@@ -153,13 +155,25 @@ export function ShelfTagCaptureScreen() {
       setImage(picked);
       setStep('processing');
 
-      const recognized = await runOcr(picked.uri);
+      // Run alongside OCR, not after: both read the same static image file
+      // and are independent of each other. Restricted to 'qr' — the only
+      // symbology the shelf-tag evidence in deferred.md has shown, and
+      // narrower than the platform default avoids treating an unrelated
+      // barcode elsewhere in frame as this tag's own code. Best-effort: an
+      // unreadable or absent QR resolves to an empty array, never an error.
+      const [recognized, barcodes] = await Promise.all([runOcr(picked.uri), scanBarcodes(picked.uri, ['qr'])]);
       const fields = extractShelfTagFields(recognized);
 
       setOcrResult(recognized);
       setExtraction(fields);
+      setBarcodeResults(barcodes);
       setDescription(fields.descriptionGuess ?? '');
-      setStoreItemCode(fields.storeItemCode ?? '');
+      // storeItemCode is deliberately never prefilled from extraction: there
+      // is no known way to read a real store item code off a Walmart shelf
+      // tag (see docs/decisions/deferred.md), and a plausible-looking wrong
+      // value here silently mismatches this observation to another
+      // product's price_observation history, which can't be undone
+      // (price_observation is append-only). Left for the user to fill in.
       setPriceText(fields.priceCent !== null ? centsToDollarsInput(fields.priceCent) : '');
       setSizeText(fields.size ? String(fields.size.quantity) : '');
       setStep('review');
@@ -185,6 +199,7 @@ export function ShelfTagCaptureScreen() {
     setError(null);
     setStep('saving');
     try {
+      const qrResult = barcodeResults.find((barcode) => barcode.type === 'qr') ?? null;
       const saved = await saveShelfTagObservation({
         householdId,
         userId: session.user.id,
@@ -198,6 +213,9 @@ export function ShelfTagCaptureScreen() {
         priceKind,
         sizeQuantity: sizeText.trim() ? sizeQuantity : null,
         unitOfMeasureId: sizeText.trim() ? selectedUnitId : null,
+        tagFooter: extraction?.tagFooter ?? null,
+        barcodeResults,
+        qrToken: qrResult ? qrPathSegment(qrResult.data) : null,
       });
       setResult(saved);
       setStep('done');
@@ -208,6 +226,8 @@ export function ShelfTagCaptureScreen() {
   }, [
     image,
     ocrResult,
+    extraction,
+    barcodeResults,
     selectedStore,
     householdId,
     session?.user.id,
@@ -226,6 +246,7 @@ export function ShelfTagCaptureScreen() {
     setImage(null);
     setOcrResult(null);
     setExtraction(null);
+    setBarcodeResults([]);
     setDescription('');
     setStoreItemCode('');
     setPriceText('');
@@ -476,7 +497,7 @@ function ReviewStep({
             Enter a price like 3.99.
           </ThemedText>
         )}
-        {extraction.unitPrice && (
+        {extraction.unitPrice && !extraction.unitPrice.isDegenerate && (
           <ThemedText type="small" themeColor="textSecondary">
             Tag also shows {extraction.unitPrice.displayAmount}/{extraction.unitPrice.unitToken}
           </ThemedText>

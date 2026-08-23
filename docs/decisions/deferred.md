@@ -78,7 +78,27 @@ From the shelf-tag-capture screen's first pass (2026-08-23, `src/parse/shelfTag.
 `src/lib/shelfTags.ts`) — see `docs/specs/06-shelf-tag-capture.md` for the full design. First
 on-device test (2026-08-23, Pixel 7, capture `01a02f72-a4e1-74c6-abca-9bb2d3850790`) surfaced two
 real bugs, both fixed same-day, plus concrete (not hypothetical) evidence for gaps already listed
-below:
+below.
+
+**Correction (2026-08-23, later same day):** the fixture that test produced,
+`tai-pei-shelf-tag.json`, has been removed. Its subject was an internet screenshot, not a tag
+physically photographed in-store — the ML Kit geometry in the file was genuine device output
+(the OCR was real), but the tag itself was not a real capture, and several bullets below and in
+`docs/specs/06-shelf-tag-capture.md` previously described it as "the one real on-device fixture."
+That was wrong in that specific way. With it gone, **the real-tag OCR fixture count is zero**,
+not one — see the corpus bullet near the end of this entry for what replaces it.
+
+A separate batch of five real Walmart tags (four analyzed, one a duplicate description) was
+photographed in-store the same day, three with a matching product package alongside for
+cross-checking. That evidence is what the rest of this entry, and the corrections below, are
+based on:
+
+| Tag | Format | Footer | Package UPC-A tail | Match |
+|---|---|---|---|---|
+| Ramen (`RAMEN BEEF`) | e-ink | `FAC 4 CAP 136 0212` | `0212` | ✅ |
+| Celery (`CELERY HEART HM`) | e-ink | `FAC 1 CAP 12 5301` | `5301` | ✅ |
+| Milk (`GAL … VITAMIN D`) | e-ink | `FAC 4 CAP 20 0010` | `0010` | ✅ |
+| Corn (`CORN BULK HM`) | paper | `FAC 12 CAP 288` (no fragment) | — (loose bulk, no UPC) | n/a |
 
 - **The four `create_provisional_*` / `record_price_observation` write RPCs were unreachable
   from any client, full stop — not merely unused.** They're defined in the `app` Postgres schema
@@ -114,16 +134,71 @@ below:
   font, not something a regex fix can address; `extractPrice` correctly returns null in this case
   (see the `tai-pei-shelf-tag.json` fixture and its test) and the user falls back to typing the
   price manually, exactly as designed. Real fixture corpus is still one tag — breadth remains open.
-- **`store_item_code` extraction's false-positive risk is now demonstrated, not hypothetical.**
-  On the same tag, the heuristic (longest standalone 4–14 digit OCR element) picks up `"3010"`
-  from `"FAC 1 CAP 6 3010"` — a shelf-facing/capacity code, not an item code or UPC. No fix
-  applied: distinguishing this from a real code would mean hand-tuning against this one tag's
-  label format, which is exactly the kind of unreviewed heuristic this project's rules say not to
-  add without a broader fixture set to validate against.
-- **No real shelf-tag OCR corpus beyond one tag.** `shelfTag.test.ts` is otherwise hand-built
-  synthetic fixtures, not on-device output. Real shelf tags vary by retailer far more than a
-  receipt's layout does. This still does not meet the project's "test against real device output"
-  bar broadly — one real fixture is a start, not a corpus.
+- **`store_item_code` extraction's false-positive risk was demonstrated, not hypothetical — and
+  it was worse than first understood.** On the ramen tag (footer `FAC 4 CAP 136 0212`, same
+  footer shape as the removed Tai Pei fixture), the old heuristic (longest standalone 4–14 digit
+  OCR element) picked up `"0212"` — not a random miss. Checked against the ramen package's
+  UPC-A (`041789002120`), `0212` is exactly the UPC's last four digits with the check digit
+  dropped. The heuristic grabbed a real, meaningful token — by accident, via a rule (longest
+  digit run) that is demonstrably ambiguous: `FAC`/`CAP` are the shelf facing and capacity, not
+  part of an item code, and nothing about "longest digit run" distinguishes the UPC-fragment
+  case from a tag whose capacity alone happens to print four digits (e.g. `CAP 1440` with no
+  fragment at all). **Fixed** (2026-08-23): `extractStoreItemCode` is removed outright rather
+  than patched. There is currently no known way to extract a real store item code from a
+  Walmart shelf tag at all — see the next two bullets for what replaced it.
+- **The false-positive above was a live, unmitigated data-corruption bug, not just an extraction
+  quirk — highest-priority fix in this batch.** The wrong 4-digit fragment was flowing straight
+  into the `storeItemCode` field the review screen prefills, which `saveShelfTagObservation`
+  then uses as the exact-match key against `retailer_product.store_item_code` (ADR 0004). A
+  4-digit space against a chain catalog of 100,000+ SKUs makes a collision likely, not
+  hypothetical: the second tag whose fragment collides with an existing `store_item_code`
+  attaches its `price_observation` to the wrong product, silently — no create, so the
+  provisional-product flag (ADR 0013) never fires, and `price_observation` is append-only (ADR
+  0003) so a wrong attachment can't be corrected away, only appended around. **Fixed**
+  (2026-08-23): the review screen no longer prefills `storeItemCode` from extraction at all
+  (`shelf-tag-capture-screen.tsx`) — the field is manual-entry only now. An empty field the user
+  fills in is correct under non-negotiable #2; a prefilled field holding a value that means
+  something else (a UPC fragment, not a SKU) is a fabrication.
+- **The footer fragment itself is real, useful signal — just not identity.** Replaced the
+  longest-digit-run heuristic with a format-scoped grammar (`extractTagFooter` in
+  `shelfTag.ts`) anchored on the literal `FAC`/`CAP` tokens: the fragment is whatever 4-digit
+  token immediately *follows* `CAP <n>`, by position, not by being the longest digit run on the
+  tag — which is what let a multi-digit capacity get confused with the fragment before. Emits
+  `format: 'eink' | 'paper'` alongside it (paper tags print no fragment at all — loose bulk
+  produce has no UPC to fragment; see the corn tag above). Returns `null` when the tag has no
+  such footer, never a guess. The extraction is kept (on `ShelfTagExtraction.tagFooter`) but not
+  wired to any database field yet — see the "tag identifier storage" item below, which needs a
+  decision before it's persisted anywhere beyond `capture_artifact.raw_output` (which already
+  retains it permanently under ADR 0002, since it's derived from the stored OCR text).
+- **Split unit-price rendering had the same bug `extractPrice` was already fixed for, on the
+  same real tag.** The celery tag renders both its total price *and* its per-unit price as a
+  split dollars+cents pair with no decimal point (`$3` `67`, twice) — `extractUnitPrice`
+  previously only ran a flattened-text regex, which matched the cents element ("67") as if it
+  were the whole amount and returned `displayAmount: "67"` for a $3.67 item. **Fixed**: geometry
+  (row-adjacency) is now checked first, same technique as `extractPrice`'s split-pair
+  detection, before falling back to the flattened-text pattern.
+- **Multi-word unit tokens ("PER FL OZ") were silently truncated to the first word.** Confirmed
+  while writing the regression test for the fix above, against the milk tag's ground truth
+  (`4.5¢ PER FL OZ`) — not a hypothetical, the test failed on the first attempt. The unit-price
+  regex's capture group was a generic lazy character class that stops at the first space
+  ("FL OZ" → "FL", `unitCode: null`). **Fixed**: the capture now tries each known 1- or 2-word
+  unit from the `UNIT_ALIASES` table (longest first) before falling back to a single bare word,
+  so a recognized two-word unit is captured whole and an unrecognized unit still surfaces
+  verbatim rather than being silently dropped or truncated.
+- **The "each"/"count" unit price is a degenerate case, now recognized as one.** Two of the four
+  real tags (celery, corn) print their total price a second time as a "$X.XX PER EA" annotation
+  — nothing new, the unit is "each". `ShelfTagUnitPriceGuess` now carries `isDegenerate: boolean`
+  (true when `unitCode === 'each'`), and the review screen skips the "tag also shows X/UNIT"
+  hint in that case rather than showing a redundant echo of the price the user already sees.
+- **No real shelf-tag OCR corpus.** The one real fixture that existed (`tai-pei-shelf-tag.json`)
+  has been removed (see the correction near the top of this entry) — its subject was not an
+  actual in-store capture. Ground truth for four real tags (ramen, celery, milk, corn — table
+  above) is recorded here and in `docs/specs/06-shelf-tag-capture.md`, covering meaningfully
+  different ground (split vs. non-split price, `PER EA` degenerate case, two-token unit, paper
+  vs. e-ink format, an effective date, a non-UPC hyphenated code), but **Claude Code cannot
+  generate these fixtures** — `OcrResult` JSON carries real ML Kit geometry, and synthesizing it
+  from a photograph would mean fabricating box coordinates, defeating the point of `CLAUDE.md`'s
+  "test against real device output" rule. Awaiting device re-capture of the four tags above.
 - **Processing is synchronous and foreground**, same tradeoff as the receipt-capture screen's
   first pass, not the async "snap-and-forget" pipeline `01-capture-pipeline.md` describes.
   Durability still holds — `capture_artifact` lands before resolution/observation is attempted —
@@ -140,6 +215,92 @@ below:
   shelf tag photography's.
 - **Product identity resolution (brand, product_class, canonical size) is unbuilt**, same gap as
   receipts. Every shelf-tag-created `retailer_product` has `product_id = null`.
+- **Brand is confirmed absent from shelf tags, including for nationally branded goods.** The
+  milk tag (`GAL … VITAMIN D`, no "Galliker's") is the stronger evidence than the produce case —
+  a branded gallon of milk gets a generic tag description too. This isn't a gap to close in the
+  tag parser; it reinforces the existing choice to create `retailer_product` with
+  `product_id = null` on every shelf-tag save.
+- **PLU on produce packages** — the celery package prints `#4575` (IFPS produce PLU) above its
+  barcode, a categorically different identifier from the UPC (class-level "celery hearts from
+  any grower," not "this bag"). `product_identifier.identifier_type` already accepts `plu`
+  (ADR 0004) and nothing populates it — no schema change needed. Out of scope for this file
+  specifically: the PLU is on the **package**, not the tag, so this belongs to the barcode-scan
+  capture path, not shelf-tag photography.
+- **`HM` recurs on produce tag descriptions** (`CELERY HEART HM`, `CORN BULK HM` — two of two
+  produce tags). Meaning unknown. Systematic rather than noise, so worth normalizing out during
+  `product_alias.normalized_text` construction eventually (so `CELERY HEART` from a later
+  capture still matches) — but that construction happens server-side (in the
+  `create_provisional_product_alias` RPC path), not in this file, and "strip an unexplained
+  token for matching purposes" is exactly the kind of heuristic `CLAUDE.md` says to write down
+  and review before adding, not infer from two samples. Not implemented. `printed_text` keeps
+  `HM` verbatim regardless (ADR 0004).
+- **Hypothesis, not fact: a boxed `W` glyph near `FAC` may signal WIC eligibility.** Present on
+  celery and milk (both WIC-eligible categories), absent on ramen (not WIC-eligible), plain text
+  on the corn tag. Three-for-one is suggestive, not confirmed — needs a WIC-eligible item that
+  isn't produce/dairy and a non-eligible item that is before it's trustworthy. Not implemented;
+  do not name a `wic_eligible` field until confirmed on more tags.
+- **Applied (2026-08-23) — tag identifier storage.** The footer fragment (see above) is real
+  signal but not identity: it can't go in `store_item_code` (wrong meaning, guaranteed
+  collisions) or `product_identifier` (unique on type+value; a 4-digit fragment isn't remotely
+  unique). Migration `add_retailer_product_tag_identifier` added a nullable
+  `retailer_product.tag_identifier jsonb` column, populated on the create path only with
+  whichever of `tag_format`, `upc_fragment`, `qr_token` are known (see `buildTagIdentifier` in
+  `shelfTags.ts`) — never sufficient for a match on its own, only for future match verification
+  and candidate narrowing (nothing reads it back for that purpose yet). `printed_code` (the
+  paper-tag hyphenated code) is in the proposal's key set but nothing populates it — there's no
+  extractor for it (Section 2b's "do not guess at its structure" still holds). Both
+  `app.create_provisional_retailer_product` and its `public.*` wrapper got the new
+  `p_tag_identifier jsonb default null` param in the same migration, avoiding the "miss the
+  wrapper" failure mode already hit once on this feature (see above). A same-migration follow-up
+  (`drop_old_create_provisional_retailer_product_overload`) dropped the pre-existing 5-argument
+  overload of both functions: `create or replace function` with an added trailing parameter
+  creates a *new* overload rather than replacing the old one — confirmed against this project's
+  live `pg_proc`, not assumed — which would otherwise have left an ambiguous duplicate for
+  PostgREST to resolve on every call. Deliberately excludes `FAC`/`CAP`/corner-badge/paper-tag
+  date, which are per-capture facts already retained permanently in `capture_artifact`, not
+  chain-scoped facts that belong on `retailer_product`. An expression index
+  (`retailer_product_upc_fragment_idx`, not unique) supports the future narrowing use case.
+- **Applied (2026-08-23) — QR/barcode decode capability added.** All four real tags carry a
+  19-character QR token (`w-mt.co/q/...`) that appears to be a stable opaque per-item identifier
+  (an earlier 2-sample hypothesis that the token encoded the store was killed by the 4-sample
+  set — treat the whole token as opaque). This codebase had no barcode/QR decoding capability at
+  all before today — no ML Kit barcode module, no scan step in the capture pipeline. Added
+  `expo-camera` (`~57.0.4`, the SDK-57-compatible version resolved by `npx expo install`, not
+  guessed) purely for its static-image decoder, `scanFromURLAsync` — verified against current
+  Expo docs and the installed package's own `.d.ts` files rather than assumed from training data
+  (non-negotiable #7), since this project already had one API surprise from an unverified
+  assumption in this same feature (the `PGRST202` schema-exposure bug above). New module:
+  `src/ocr/scanBarcode.ts` (`scanBarcodes`, restricted to `['qr']` at the call site in
+  `shelf-tag-capture-screen.tsx`, run in parallel with OCR via `Promise.all` since both read the
+  same static image independently). A decoded barcode is written to its **own**
+  `capture_artifact` row (`parser_version` = `BARCODE_SCAN_VERSION`), not merged into the OCR
+  artifact's `raw_output` — same "one row per parser run" model as OCR (ADR 0002), only inserted
+  when at least one barcode actually decoded. **Not yet exercised on a real device** — `expo
+  prebuild` needs to run before the native module is linked into the gitignored local `android/`
+  project, and per user instruction this session does not run native builds locally (they've
+  frozen this machine before); the user needs to run prebuild/build themselves. Section 5d's
+  caution about decode difficulty (OpenCV needed cropping/upscaling/CLAHE for the glossy,
+  angled milk tag QR; ML Kit is expected to do better but is unverified) is therefore still
+  fully open. The further idea of resolving the shortlink online for full product identity was
+  **not** built — it remains a **proposal requiring its own ADR** before any building, per the
+  original handoff: it would be the project's first outbound third-party network dependency, and
+  needs conditions around never blocking capture, failing silently offline, and treating the
+  result as provisional evidence, not ground truth.
+- **Deferred (2026-08-23, explicit decision) — implied package size from price ÷ unit price.**
+  When a tag prints both a total price and a per-unit price, package size is recoverable even
+  though the tag never states it (worked twice against real packages: ramen's 46¢ ÷ 15.3¢/oz
+  bands to 3.00–3.02 oz, matching the 43g×2 = 86g = 3.03oz package; milk's $5.78 ÷ 4.5¢/fl oz
+  bands to 127.0–129.9 fl oz, matching the 1 gal = 128 fl oz package). Not a math problem —
+  "only emit when the band contains exactly one **plausible** pack size" requires a definition
+  of "plausible" that doesn't exist anywhere in this codebase or its docs. The milk band
+  actually contains two integers (128 and 129), so "the only standard size in range" has to
+  mean something more specific than "any whole number": almost certainly a curated list of real
+  retail package sizes per unit, which is domain knowledge (US grocery packaging conventions),
+  not something to invent inline — the "stop and ask before improvising a heuristic" case in
+  `CLAUDE.md`'s working agreement, even though the rest of this feature batch was safe to build
+  without that gate. **Explicitly deferred rather than built** pending that size-reference list
+  being specified and reviewed. Would live downstream of `extractShelfTagFields`, not inside
+  it, per the replay contract in ADR 0002, whenever it's picked up.
 
 ## Catalog
 

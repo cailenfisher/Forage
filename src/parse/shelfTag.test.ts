@@ -1,22 +1,21 @@
-import { readFileSync } from 'node:fs';
-import { join } from 'node:path';
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
 
 import { extractShelfTagFields, normalizeUnitToken } from './shelfTag.ts';
 import type { OcrElement, OcrResult } from './types.ts';
 
-function loadFixture(name: string): OcrResult {
-  const path = join(import.meta.dirname, '..', '..', '__fixtures__', name);
-  return JSON.parse(readFileSync(path, 'utf-8'));
-}
-
-// Synthetic fixtures, not real device output, used for the tests below that
-// don't load a fixture file. There is only one real on-device shelf tag
-// fixture so far (tai-pei-shelf-tag.json, pulled from an actual failed
-// capture — see the test at the bottom); these exercise extraction logic
-// in isolation and do not stand in for the "test against real device
-// output" bar the rest of the project holds itself to.
+// Synthetic fixtures, not real device output. As of 2026-08-23 there are
+// zero real on-device shelf-tag OCR fixtures — the one that existed
+// (tai-pei-shelf-tag.json) was pulled from an internet screenshot, not a
+// physical tag photographed in-store, and has been removed; its ML Kit
+// geometry was genuine device output but the subject wasn't a real capture,
+// so it didn't meet the project's "test against real device output" bar
+// either. Four real tags (ramen, celery, milk, corn) have ground truth
+// recorded in docs/decisions/deferred.md and docs/specs/06-shelf-tag-capture.md
+// pending device re-capture — see that ground truth before adding fixtures
+// here so expected values aren't reverse-engineered from parser output.
+// These synthetic tests exercise extraction logic in isolation and do not
+// stand in for that bar.
 function element(text: string, x: number, y: number, width = text.length * 10, height = 20): OcrElement {
   return { text, box: { x, y, width, height } };
 }
@@ -77,7 +76,61 @@ test('extractShelfTagFields reads a unit-price annotation verbatim, including a 
   const result = ocrResult([element('$0.25/OZ', 0, 0)]);
   const extraction = extractShelfTagFields(result);
 
-  assert.deepEqual(extraction.unitPrice, { displayAmount: '$0.25', unitToken: 'OZ', unitCode: 'oz' });
+  assert.deepEqual(extraction.unitPrice, {
+    displayAmount: '$0.25',
+    unitToken: 'OZ',
+    unitCode: 'oz',
+    isDegenerate: false,
+  });
+});
+
+test('extractShelfTagFields reads a two-token unit ("PER FL OZ") in the flattened unit-price annotation', () => {
+  // Ground-truth milk tag shape (docs/decisions/deferred.md): unit price
+  // prints as its own element followed by "PER" and "FL OZ" as separate
+  // OCR elements, unlike the split dollars+cents case below.
+  const result = ocrResult([element('4.5¢', 0, 0), element('PER', 40, 0), element('FL OZ', 70, 0)]);
+  const extraction = extractShelfTagFields(result);
+
+  assert.deepEqual(extraction.unitPrice, {
+    displayAmount: '4.5¢',
+    unitToken: 'FL OZ',
+    unitCode: 'fl_oz',
+    isDegenerate: false,
+  });
+});
+
+test('extractShelfTagFields reads a unit price whose amount is split across a dollars+cents row pair, not the cents alone', () => {
+  // Ground-truth celery tag shape: the unit price prints as "$3.67 PER EA"
+  // but "$3" and "67" render as separate OCR elements with no decimal point
+  // between them, same style as the main price. A flattened-text-only match
+  // would grab "67" (the cents element) as the amount and miss the dollars
+  // entirely — this is the real bug the row-based match below fixes.
+  const result = ocrResult([
+    element('$3', 0, 0, 40, 20),
+    element('67', 45, 0, 30, 20),
+    element('PER', 80, 0, 30, 20),
+    element('EA', 115, 0, 25, 20),
+  ]);
+  const extraction = extractShelfTagFields(result);
+
+  assert.deepEqual(extraction.unitPrice, {
+    displayAmount: '$3.67',
+    unitToken: 'EA',
+    unitCode: 'each',
+    isDegenerate: true,
+  });
+});
+
+test('extractShelfTagFields does not let a split unit-price row also register as a package size', () => {
+  const result = ocrResult([
+    element('$3', 0, 0, 40, 20),
+    element('67', 45, 0, 30, 20),
+    element('PER', 80, 0, 30, 20),
+    element('EA', 115, 0, 25, 20),
+  ]);
+  const extraction = extractShelfTagFields(result);
+
+  assert.equal(extraction.size, null);
 });
 
 test('extractShelfTagFields reads a bare "<qty> <unit>" as the package size, distinct from the unit price', () => {
@@ -95,18 +148,40 @@ test('extractShelfTagFields does not mistake the unit-price fraction for a size'
   assert.equal(extraction.size, null);
 });
 
-test('extractShelfTagFields extracts a store item code from its own digit-only element, preferring the longest', () => {
-  const result = ocrResult([element('12345', 0, 0), element('071314540123', 0, 30)]);
+test('extractShelfTagFields reads an e-ink tag footer as facing/capacity/fragment, not a store item code', () => {
+  // Ground-truth ramen tag footer (docs/decisions/deferred.md): "FAC 4 CAP
+  // 136 0212". Confirmed against the package UPC-A on three independent
+  // tag/package pairs — the fragment is the UPC's last four digits with the
+  // check digit dropped.
+  const result = ocrResult([element('FAC 4 CAP 136 0212', 0, 0)]);
   const extraction = extractShelfTagFields(result);
 
-  assert.equal(extraction.storeItemCode, '071314540123');
+  assert.deepEqual(extraction.tagFooter, { format: 'eink', facing: 4, capacity: 136, fragment: '0212' });
 });
 
-test('extractShelfTagFields leaves storeItemCode null when no digit-only element is present', () => {
+test('extractShelfTagFields reads a paper tag footer with no trailing fragment (bulk produce has no UPC to fragment)', () => {
+  const result = ocrResult([element('FAC 12 CAP 288', 0, 0)]);
+  const extraction = extractShelfTagFields(result);
+
+  assert.deepEqual(extraction.tagFooter, { format: 'paper', facing: 12, capacity: 288, fragment: null });
+});
+
+test('extractShelfTagFields does not mistake a 4-digit capacity for the footer fragment', () => {
+  // A capacity that happens to be 4 digits (e.g. "CAP 1440") with nothing
+  // printed after it must not be read as a fragment — the previous
+  // longest-digit-run heuristic could not tell these apart; the FAC/CAP
+  // anchor can, because it takes the fragment by position, not by length.
+  const result = ocrResult([element('FAC 4 CAP 1440', 0, 0)]);
+  const extraction = extractShelfTagFields(result);
+
+  assert.deepEqual(extraction.tagFooter, { format: 'paper', facing: 4, capacity: 1440, fragment: null });
+});
+
+test('extractShelfTagFields leaves tagFooter null when the tag has no FAC/CAP footer at all', () => {
   const result = ocrResult([element('GREAT VALUE MILK', 0, 0), element('$3.99', 0, 30)]);
   const extraction = extractShelfTagFields(result);
 
-  assert.equal(extraction.storeItemCode, null);
+  assert.equal(extraction.tagFooter, null);
 });
 
 test('extractShelfTagFields guesses the description from the row with the most letters, skipping price/code/unit-price rows', () => {
@@ -135,7 +210,7 @@ test('extractShelfTagFields returns all-null fields for an empty capture rather 
     priceCent: null,
     unitPrice: null,
     size: null,
-    storeItemCode: null,
+    tagFooter: null,
     descriptionGuess: null,
   });
 });
@@ -149,32 +224,4 @@ test('normalizeUnitToken maps known tokens case- and punctuation-insensitively',
 
 test('normalizeUnitToken returns null for an unrecognized unit rather than guessing', () => {
   assert.equal(normalizeUnitToken('SLEEVE'), null);
-});
-
-// Real on-device OCR output (ML Kit, Pixel 7), pulled from capture
-// 01a02f72-a4e1-74c6-abca-9bb2d3850790 after it failed to save. The tag
-// itself prints "$11 87" as its total price and "25.5¢ PER OZ" as its unit
-// price (see docs/decisions/deferred.md), but ML Kit never recognized the
-// "$11" text at all — only the "87" (cents) and "25.5" (unit price number)
-// came through. This fixture documents that as an honest, known gap: no
-// regex can recover text the OCR engine never produced, and the correct
-// behavior is to leave priceCent null so the review screen's price field
-// stays a normal editable input rather than showing a wrong or fabricated
-// number.
-test('extractShelfTagFields on a real device fixture: honestly reports the price as unrecoverable when OCR drops the whole-dollar text', () => {
-  const extraction = extractShelfTagFields(loadFixture('tai-pei-shelf-tag.json'));
-
-  assert.equal(extraction.priceCent, null);
-  assert.deepEqual(extraction.unitPrice, { displayAmount: '25.5', unitToken: 'OZ', unitCode: 'oz' });
-  // The trailing "7" is a small shelf-facing marker printed to the right of
-  // the title, unrelated to the product name — row reconstruction merges it
-  // in because its bounding box vertically overlaps the title row's band by
-  // more than the median-height threshold. A real quirk, not a test bug;
-  // descriptionGuess is a prefill the user edits, not a written value.
-  assert.equal(extraction.descriptionGuess, 'TAI PEI CHKN POTSTKR 7');
-  // Known false-positive, not a regression: "3010" is a shelf-facing code
-  // from "FAC 1 CAP 6 3010", not an item code, but it's the only standalone
-  // 4-14 digit element on the tag and the heuristic can't tell the
-  // difference. Flagged in deferred.md rather than papered over here.
-  assert.equal(extraction.storeItemCode, '3010');
 });

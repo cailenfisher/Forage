@@ -31,7 +31,13 @@
         }
       ],
       "expo-secure-store",
-      "expo-mlkit-ocr"
+      "expo-mlkit-ocr",
+      [
+        "expo-camera",
+        {
+          "recordAudioAndroid": false
+        }
+      ]
     ],
     "experiments": {
       "typedRoutes": true,
