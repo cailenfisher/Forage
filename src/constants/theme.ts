@@ -1,6 +1,11 @@
 /**
  * Below are the colors that are used in the app. The colors are defined in the light and dark mode.
  * There are many other ways to style your app. For example, [Nativewind](https://www.nativewind.dev/), [Tamagui](https://tamagui.dev/), [unistyles](https://reactnativeunistyles.vercel.app), etc.
+ *
+ * Brand color is Mulberry (#7A2D57), used sparingly as an accent — neutrals carry most of the
+ * UI. The gray ramp is warm (hue ~32) rather than true neutral, so surfaces read like paper
+ * instead of stark white/black. `tint` is the brand accent for text/icons on a themed
+ * background; it's lightened in dark mode to hold WCAG AA contrast against the dark background.
  */
 
 import '@/global.css';
@@ -9,18 +14,20 @@ import { Platform } from 'react-native';
 
 export const Colors = {
   light: {
-    text: '#000000',
-    background: '#ffffff',
-    backgroundElement: '#F0F0F3',
-    backgroundSelected: '#E0E1E6',
-    textSecondary: '#60646C',
+    text: '#26211D',
+    background: '#FBFAF9',
+    backgroundElement: '#F2F0ED',
+    backgroundSelected: '#E5E1DC',
+    textSecondary: '#6C645A',
+    tint: '#7A2D57',
   },
   dark: {
-    text: '#ffffff',
-    background: '#000000',
-    backgroundElement: '#212225',
-    backgroundSelected: '#2E3135',
-    textSecondary: '#B0B4BA',
+    text: '#F6F5F3',
+    background: '#171512',
+    backgroundElement: '#272420',
+    backgroundSelected: '#38332E',
+    textSecondary: '#AFA9A1',
+    tint: '#C45F96',
   },
 } as const;
 
