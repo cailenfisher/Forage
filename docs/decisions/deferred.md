@@ -541,6 +541,28 @@ based on:
   version is stored but deliberately not wired into any write path — see the STOP-AND-ASK entry
   below, unchanged by this work per explicit instruction. The cents-denominated price bug (live
   bug entry above) is also unchanged — explicitly deferred, not touched.
+- **Applied (2026-08-23) — Aldi store row seeded, and a debug card added to unblock verifying
+  ADR 0018 on-device.** After the first post-build save (the recurring Walmart ramen tag) showed
+  `retailer_product.tag_identifier` populated but `price_observation.shelf_tag_template_version_id`
+  still null, investigation found no code bug, but two real blockers: (1) no Aldi `store` row
+  existed at all — the review screen's store list had nothing to select, so the Aldi templates
+  were structurally untestable regardless of extraction correctness; (2) even the Walmart data
+  point was inconclusive, because ADR 0018 was deliberately built to be invisible in every
+  visible field for Walmart, so "results look identical" is expected there and proves nothing
+  either way. Fixed the first: migration `seed_aldi_store` adds an address-less `store` row for
+  Aldi, same minimal shape as the existing Walmart row from `seed_test_store_and_receipt_bucket`.
+  Addressed the second with a **temporary** debug card (`DebugExtractionCard` in
+  `shelf-tag-capture-screen.tsx`, dashed-border styling to mark it as non-permanent) shown at the
+  top of the shelf-tag review screen, reading straight from `ShelfTagExtraction` rather than the
+  editable form state: which template matched (or didn't) and its confidence/runner-up, the
+  identifier candidate, brand, description guess, tag footer, unit price, size, and the raw
+  extracted price — same pattern as the QR-resolution debug card built and later removed during
+  ADR 0016/0017. Remove once template matching has been validated against real device OCR for
+  both Walmart and Aldi. Still unconfirmed: whether `resolveShelfTagTemplateVersionId`'s
+  two-query DB lookup actually succeeds at runtime on-device — that function swallows errors
+  silently (best-effort, never blocks the save), so a runtime failure there would produce no
+  visible trace even with this card; the card only shows what extraction itself found, not
+  whether the FK resolution afterward succeeded.
 - **STOP AND ASK — `price_kind`'s default is the actual gap, not the column.** `price_kind`
   currently defaults to `regular` on the review screen (`06-shelf-tag-capture.md`). Under
   snap-and-forget, an unreviewed clearance or sale tag writes `regular`, which is precisely the

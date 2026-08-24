@@ -404,6 +404,60 @@ function CaptureStep({
   );
 }
 
+// Temporary diagnostic aid (same pattern as the QR-resolution debug card
+// built and later removed during ADR 0016/0017 — see deferred.md): shows
+// exactly what extractShelfTagFields produced, straight from `extraction`
+// rather than the editable form state below, so a real-device capture can
+// be checked against expectations without a debugger attached. Remove once
+// ADR 0018's template matching has been validated against real device OCR
+// output for both build-target retailers.
+function DebugExtractionCard({ extraction }: { extraction: ShelfTagExtraction }) {
+  const { templateMatch, identifierCandidate, brand, descriptionGuess, tagFooter, unitPrice, size, priceCent } = extraction;
+
+  const rows: { label: string; value: string }[] = [
+    {
+      label: 'Template',
+      value: templateMatch
+        ? `${templateMatch.slug} v${templateMatch.version} — confidence ${templateMatch.matchConfidence.toFixed(2)} (runner-up ${templateMatch.runnerUpConfidence.toFixed(2)})`
+        : 'No template matched — flat extraction used',
+    },
+    {
+      label: 'Identifier candidate',
+      value: identifierCandidate ? `${identifierCandidate.key} = ${identifierCandidate.value}` : 'None',
+    },
+    { label: 'Brand', value: brand ?? 'None' },
+    { label: 'Description guess', value: descriptionGuess ?? 'None' },
+    {
+      label: 'Tag footer',
+      value: tagFooter
+        ? `${tagFooter.format} facing=${tagFooter.facing} capacity=${tagFooter.capacity} fragment=${tagFooter.fragment ?? 'none'}`
+        : 'None',
+    },
+    {
+      label: 'Unit price',
+      value: unitPrice
+        ? `${unitPrice.displayAmount}/${unitPrice.unitToken} (${unitPrice.unitCode ?? 'unrecognized'})${unitPrice.isDegenerate ? ' — degenerate' : ''}`
+        : 'None',
+    },
+    {
+      label: 'Size',
+      value: size ? `${size.quantity} ${size.unitToken} (${size.unitCode ?? 'unrecognized'})` : 'None',
+    },
+    { label: 'Extracted price', value: priceCent !== null ? `${priceCent}¢` : 'None — manual entry required' },
+  ];
+
+  return (
+    <ThemedView type="backgroundElement" style={[styles.section, styles.debugSection]}>
+      <ThemedText type="smallBold">Debug: extraction (ADR 0018)</ThemedText>
+      {rows.map((row) => (
+        <ThemedText key={row.label} type="small" themeColor="textSecondary">
+          {row.label}: {row.value}
+        </ThemedText>
+      ))}
+    </ThemedView>
+  );
+}
+
 function ReviewStep({
   extraction,
   description,
@@ -459,6 +513,8 @@ function ReviewStep({
 
   return (
     <View style={styles.reviewContainer}>
+      <DebugExtractionCard extraction={extraction} />
+
       <ThemedView type="backgroundElement" style={styles.section}>
         <ThemedText type="smallBold">Item</ThemedText>
         <ThemedText type="small" themeColor="textSecondary">
@@ -714,6 +770,11 @@ const styles = StyleSheet.create({
     borderRadius: Spacing.three,
     padding: Spacing.three,
     gap: Spacing.two,
+  },
+  debugSection: {
+    borderWidth: 1,
+    borderStyle: 'dashed',
+    borderColor: '#e0a030',
   },
   input: {
     borderWidth: 1,
