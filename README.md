@@ -1,7 +1,6 @@
 # Forage
 
-Forage is a grocery and household goods price tracker focused on price intelligence — unit
-price per item per store over time. It is not a budgeting app or a pantry inventory tool.
+Forage is a grocery and household goods price tracker focused on price intelligence to help household planning.
 
 ## Stack
 
